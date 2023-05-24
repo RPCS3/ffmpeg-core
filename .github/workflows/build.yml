@@ -11,12 +11,18 @@ jobs:
       fail-fast: false
       matrix:
         # os: [ubuntu-latest, windows-latest, macos-latest]
-        build: [ubuntu-x64, windows-x64, macos-x64, macos-arm64]
+        build: [ubuntu-x64, ubuntu-20.04-x64, windows-x64, macos-x64, macos-arm64]
         config: [Release]
         include:
           - build: ubuntu-x64
             os: ubuntu-latest
             triplet: x64-linux-release
+            vcpkg-root: /usr/local/share/vcpkg
+            extra-args: ""
+          - build: ubuntu-20.04-x64
+            os: ubuntu-20.04
+            triplet: x64-linux-release
+            upload-path: /home/runner/.cache/vcpkg/archives
             vcpkg-root: /usr/local/share/vcpkg
             extra-args: ""
           - build: windows-x64
@@ -47,6 +53,11 @@ jobs:
         run: |
           sudo apt -y install nasm
         if: matrix.os == 'ubuntu-latest'
+
+      - name: Set up build environment (ubuntu-20.04)
+        run: |
+          sudo apt -y install nasm
+        if: matrix.os == 'ubuntu-20.04'
 
       - name: Patch vcpkg
         run: |
