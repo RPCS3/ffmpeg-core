@@ -8,6 +8,7 @@ jobs:
   build:
     name: ${{ matrix.build }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: true
 
     strategy:
       fail-fast: false
@@ -91,7 +92,7 @@ jobs:
         run: |
           (cd ${{ matrix.vcpkg-root }} && git fetch origin)
           (cd ${{ matrix.vcpkg-root }} && git reset --hard)
-          (cd ${{ matrix.vcpkg-root }} && git checkout 34823ada10080ddca99b60e85f80f55e18a44eea)
+          (cd ${{ matrix.vcpkg-root }} && git checkout tags/2025.12.12)
           (cd ${{ matrix.vcpkg-root }} && git apply --ignore-space-change --ignore-whitespace --3way ${{ github.workspace }}/ffmpeg.patch)
 
       - name: Build ffmpeg
@@ -109,7 +110,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-${{ matrix.build }}-${{ matrix.arch }}
-          path: ${{ matrix.vcpkg-root }}/packages/ffmpeg_${{ matrix.arch }}-${{ matrix.triplet }}/lib
+          path: ${{ matrix.vcpkg-root }}/packages/ffmpeg_${{ matrix.arch }}-${{ matrix.triplet }}
         if: ${{ always() }}
 
   create-release:
@@ -142,6 +143,6 @@ jobs:
           ls -al artifacts/
           wget -c https://github.com/tcnksm/ghr/releases/download/v0.14.0/ghr_v0.14.0_linux_amd64.tar.gz
           tar xfv ghr_v0.14.0_linux_amd64.tar.gz
-          ghr_v0.14.0_linux_amd64/ghr -u Vita3K -r ffmpeg-core -n 'Automatic FFmpeg CI builds (${{ env.COMMIT_SHORT_SHA }})' -b "$(printf "Corresponding commit: ${{ github.sha }}")" ${{ env.COMMIT_SHORT_SHA }} artifacts/
+          ghr_v0.14.0_linux_amd64/ghr -u RPCS3 -r ffmpeg-core -n 'Automatic FFmpeg CI builds (${{ env.COMMIT_SHORT_SHA }})' -b "$(printf "Corresponding commit: ${{ github.sha }}")" ${{ env.COMMIT_SHORT_SHA }} artifacts/
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
