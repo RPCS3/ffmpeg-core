@@ -42,22 +42,23 @@ execute_process(
 	OUTPUT_STRIP_TRAILING_WHITESPACE)
 
 # Download prebuilt ffmpeg
-if(NOT EXISTS "${CMAKE_BINARY_DIR}/external/ffmpeg.zip")
-	message(STATUS "Downloading FFMPEG prebuilts...")
-	file(DOWNLOAD https://github.com/Vita3K/ffmpeg-core/releases/download/${FFMPEG_GIT_SHA}/${FFMPEG_PREBUILTS_NAME}
-		"${CMAKE_BINARY_DIR}/external/ffmpeg.zip" SHOW_PROGRESS
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip")
+	set(FFMPEG_URL "https://github.com/RPCS3/ffmpeg-core/releases/download/${FFMPEG_GIT_SHA}/${FFMPEG_PREBUILTS_NAME}")
+	message(STATUS "Downloading FFMPEG prebuilts from: ${FFMPEG_URL}")
+
+	file(DOWNLOAD "${FFMPEG_URL}"
+		"${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip" SHOW_PROGRESS
 		STATUS FILE_STATUS)
 	list(GET FILE_STATUS 0 STATUS_CODE)
 	if (NOT STATUS_CODE EQUAL 0)
-		file(REMOVE "${CMAKE_BINARY_DIR}/external/ffmpeg.zip") # CMake create 0 byte file even if URL is invalid. So need to delete it.
-		message(FATAL_ERROR "No FFMPEG prebuilt found with corresponding commit SHA (${FFMPEG_GIT_SHA})")
+		file(REMOVE "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip") # CMake create 0 byte file even if URL is invalid. So need to delete it.
+		message(FATAL_ERROR "Failed to download FFMPEG prebuilts from: ${FFMPEG_URL}")
 	endif()
 endif()
 
-if(NOT EXISTS "${CMAKE_BINARY_DIR}/external/ffmpeg/lib")
-	file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/external/ffmpeg/lib")
-	execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf "${CMAKE_BINARY_DIR}/external/ffmpeg.zip"
-		WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/external/ffmpeg/lib")
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib")
+	execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip"
+		WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg")
 endif()
 
 set(LIB_PREFIX "lib")
@@ -75,9 +76,9 @@ elseif (APPLE)
 endif ()
 
 target_link_libraries(${FFMPEG_CORE_NAME} INTERFACE
-	"${CMAKE_BINARY_DIR}/external/ffmpeg/lib/${LIB_PREFIX}avformat.${LIB_EXT}"
-	"${CMAKE_BINARY_DIR}/external/ffmpeg/lib/${LIB_PREFIX}avcodec.${LIB_EXT}"
-	"${CMAKE_BINARY_DIR}/external/ffmpeg/lib/${LIB_PREFIX}swscale.${LIB_EXT}"
-	"${CMAKE_BINARY_DIR}/external/ffmpeg/lib/${LIB_PREFIX}avutil.${LIB_EXT}"
-	"${CMAKE_BINARY_DIR}/external/ffmpeg/lib/${LIB_PREFIX}avfilter.${LIB_EXT}"
-	"${CMAKE_BINARY_DIR}/external/ffmpeg/lib/${LIB_PREFIX}swresample.${LIB_EXT}")
+	"${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/${LIB_PREFIX}avformat.${LIB_EXT}"
+	"${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/${LIB_PREFIX}avcodec.${LIB_EXT}"
+	"${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/${LIB_PREFIX}swscale.${LIB_EXT}"
+	"${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/${LIB_PREFIX}avutil.${LIB_EXT}"
+	"${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/${LIB_PREFIX}avfilter.${LIB_EXT}"
+	"${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/${LIB_PREFIX}swresample.${LIB_EXT}")
