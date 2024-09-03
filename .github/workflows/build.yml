@@ -92,7 +92,7 @@ jobs:
         run: |
           (cd ${{ matrix.vcpkg-root }} && git fetch origin)
           (cd ${{ matrix.vcpkg-root }} && git reset --hard)
-          (cd ${{ matrix.vcpkg-root }} && git checkout tags/2025.12.12)
+          (cd ${{ matrix.vcpkg-root }} && git checkout tags/2026.04.27)
           (cd ${{ matrix.vcpkg-root }} && git apply --ignore-space-change --ignore-whitespace --3way ${{ github.workspace }}/ffmpeg.patch)
 
       - name: Build ffmpeg

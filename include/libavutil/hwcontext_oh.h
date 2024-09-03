@@ -1,6 +1,8 @@
 /*
  * This file is part of FFmpeg.
  *
+ * Copyright (c) 2025 Zhao Zhili <quinkblack@foxmail.com>
+ *
  * FFmpeg is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -16,19 +18,17 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVUTIL_ATTRIBUTES_INTERNAL_H
-#define AVUTIL_ATTRIBUTES_INTERNAL_H
+#ifndef AVUTIL_HWCONTEXT_OH_H
+#define AVUTIL_HWCONTEXT_OH_H
 
-#include "attributes.h"
+/**
+ * OpenHarmony codec device
+ */
+typedef struct AVOHCodecDeviceContext {
+    /**
+     * Pointer to OHNativeWindow
+     */
+    void *native_window;
+} AVOHCodecDeviceContext;
 
-#if (AV_GCC_VERSION_AT_LEAST(4,0) || defined(__clang__)) && (defined(__ELF__) || defined(__MACH__))
-#    define attribute_visibility_hidden __attribute__((visibility("hidden")))
-#    define FF_VISIBILITY_PUSH_HIDDEN   _Pragma("GCC visibility push(hidden)")
-#    define FF_VISIBILITY_POP_HIDDEN    _Pragma("GCC visibility pop")
-#else
-#    define attribute_visibility_hidden
-#    define FF_VISIBILITY_PUSH_HIDDEN
-#    define FF_VISIBILITY_POP_HIDDEN
-#endif
-
-#endif /* AVUTIL_ATTRIBUTES_INTERNAL_H */
+#endif /* AVUTIL_HWCONTEXT_OH_H */
