@@ -52,10 +52,10 @@ if(NOT EXISTS "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip")
 	endif()
 endif()
 
-if(NOT EXISTS "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib")
-	file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib")
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg")
+	file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg")
 	execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip"
-		WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib")
+		WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/3rdparty/ffmpeg")
 endif()
 
 set(LIB_PREFIX "lib")

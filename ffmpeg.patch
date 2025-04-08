@@ -1,15 +1,15 @@
 diff --git a/ports/ffmpeg/portfile.cmake b/ports/ffmpeg/portfile.cmake
-index 35bac875b..b16d9cb64 100644
+index e536d1a449..09ccc915e4 100644
 --- a/ports/ffmpeg/portfile.cmake
 +++ b/ports/ffmpeg/portfile.cmake
-@@ -42,7 +42,20 @@ else()
-     set(LIB_PATH_VAR "LIBRARY_PATH")
+@@ -29,7 +29,20 @@ if (VCPKG_TARGET_ARCHITECTURE STREQUAL "x86" OR VCPKG_TARGET_ARCHITECTURE STREQU
+     vcpkg_add_to_path("${NASM_EXE_PATH}")
  endif()
  
 -set(OPTIONS "--enable-pic --disable-doc --enable-debug --enable-runtime-cpudetect --disable-autodetect")
 +set(OPTIONS "--enable-pic --disable-doc --enable-runtime-cpudetect --disable-autodetect")
 +
-+# Only enable what is used by Vita3K
++# Only enable what is used by RPCS3
 +string(APPEND OPTIONS " --disable-everything")
 +string(APPEND OPTIONS " --enable-decoder=aac --enable-decoder=aac_latm --enable-decoder=atrac3 --enable-decoder=atrac3p --enable-decoder=atrac9 --enable-decoder=mp3 --enable-decoder=pcm_s16le --enable-decoder=pcm_s8")
 +string(APPEND OPTIONS " --enable-decoder=mov --enable-decoder=h264 --enable-decoder=mpeg4 --enable-decoder=mpeg2video --enable-decoder=mjpeg --enable-decoder=mjpegb")
@@ -22,9 +22,9 @@ index 35bac875b..b16d9cb64 100644
 +string(APPEND OPTIONS " --enable-bsf=mjpeg2jpeg")
 +string(APPEND OPTIONS " --enable-indev=dshow")
  
- if(VCPKG_TARGET_IS_WINDOWS)
-     vcpkg_acquire_msys(MSYS_ROOT PACKAGES automake1.16)
-@@ -80,7 +93,7 @@ endif()
+ if(VCPKG_TARGET_IS_MINGW)
+     if(VCPKG_TARGET_ARCHITECTURE STREQUAL "x86")
+@@ -61,7 +74,7 @@ endif()
  vcpkg_cmake_get_vars(cmake_vars_file)
  include("${cmake_vars_file}")
  if(VCPKG_DETECTED_MSVC)
@@ -33,14 +33,14 @@ index 35bac875b..b16d9cb64 100644
      set(OPTIONS "--toolchain=msvc ${OPTIONS}")
      # This is required because ffmpeg depends upon optimizations to link correctly
      string(APPEND VCPKG_COMBINED_C_FLAGS_DEBUG " -O2")
-@@ -574,6 +587,11 @@ if (NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
+@@ -713,6 +726,11 @@ if (NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
      # We use response files here as the only known way to handle spaces in paths
      set(crsp "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/cflags.rsp")
      string(REGEX REPLACE "-arch [A-Za-z0-9_]+" "" VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED "${VCPKG_COMBINED_C_FLAGS_RELEASE}")
 +    if(VCPKG_TARGET_IS_OSX)
-+        # macosx-version-min version is set with current macOS version. So replace them to 11.0
++        # macosx-version-min version is set with current macOS version. So replace them to 14.0
 +        string(REGEX REPLACE "-mmacosx-version-min=[0-9]+.[0-9]+" "" VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED "${VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED}")
-+        string(APPEND VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED " -mmacosx-version-min=11.0")
++        string(APPEND VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED " -mmacosx-version-min=14.0")
 +    endif()
      file(WRITE "${crsp}" "${VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED}")
      set(ldrsp "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/ldflags.rsp")
