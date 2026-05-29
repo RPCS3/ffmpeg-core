@@ -1,8 +1,8 @@
 diff --git a/ports/ffmpeg/portfile.cmake b/ports/ffmpeg/portfile.cmake
-index 88598976fb..845f007c7d 100644
+index 6835d95c0c..bd641d4e03 100644
 --- a/ports/ffmpeg/portfile.cmake
 +++ b/ports/ffmpeg/portfile.cmake
-@@ -32,6 +32,19 @@ endif()
+@@ -33,6 +33,19 @@ endif()
  
  set(OPTIONS "--enable-pic --disable-doc --enable-runtime-cpudetect --disable-autodetect")
  
@@ -22,7 +22,7 @@ index 88598976fb..845f007c7d 100644
  if(VCPKG_TARGET_IS_MINGW)
      if(VCPKG_TARGET_ARCHITECTURE STREQUAL "x86")
          string(APPEND OPTIONS " --target-os=mingw32")
-@@ -425,11 +438,7 @@ if("openssl" IN_LIST FEATURES)
+@@ -426,11 +439,7 @@ if("openssl" IN_LIST FEATURES)
      set(OPTIONS "${OPTIONS} --enable-openssl")
      set(WITH_OPENSSL ON)
  else()
@@ -35,7 +35,7 @@ index 88598976fb..845f007c7d 100644
  endif()
  
  if("opus" IN_LIST FEATURES)
-@@ -748,6 +757,11 @@ if (NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
+@@ -749,6 +758,11 @@ if (NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
      # We use response files here as the only known way to handle spaces in paths
      set(crsp "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/cflags.rsp")
      string(REGEX REPLACE "-arch [A-Za-z0-9_]+" "" VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED "${VCPKG_COMBINED_C_FLAGS_RELEASE}")
