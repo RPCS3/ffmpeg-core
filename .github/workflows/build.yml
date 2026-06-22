@@ -93,6 +93,7 @@ jobs:
           (cd ${{ matrix.vcpkg-root }} && git fetch origin)
           (cd ${{ matrix.vcpkg-root }} && git reset --hard)
           (cd ${{ matrix.vcpkg-root }} && git checkout tags/2026.06.01)
+          (cp ${{ github.workspace }}/ffmpeg-add-psmf-support.patch ${{ matrix.vcpkg-root }}/ports/ffmpeg/)
           (cd ${{ matrix.vcpkg-root }} && git apply --ignore-space-change --ignore-whitespace --3way ${{ github.workspace }}/ffmpeg.patch)
 
       - name: Build ffmpeg

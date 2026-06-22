@@ -1,28 +1,36 @@
 diff --git a/ports/ffmpeg/portfile.cmake b/ports/ffmpeg/portfile.cmake
-index 6835d95c0c..6f06e402bd 100644
+index 6835d95c0c..8fa9caf6ec 100644
 --- a/ports/ffmpeg/portfile.cmake
 +++ b/ports/ffmpeg/portfile.cmake
-@@ -33,6 +33,19 @@ endif()
+@@ -17,6 +17,7 @@ vcpkg_from_github(
+         0046-fix-msvc-detection.patch
+         0047-fix-msvc-utf8.patch
+         0048-backport-23039.patch
++        ffmpeg-add-psmf-support.patch
+ )
+ 
+ if(SOURCE_PATH MATCHES " ")
+@@ -33,6 +34,19 @@ endif()
  
  set(OPTIONS "--enable-pic --disable-doc --enable-runtime-cpudetect --disable-autodetect")
  
 +# Only enable what is used by RPCS3
 +string(APPEND OPTIONS " --disable-everything --disable-network")
-+string(APPEND OPTIONS " --enable-decoder=aac --enable-decoder=aac_latm --enable-decoder=atrac3 --enable-decoder=atrac3p --enable-decoder=atrac9 --enable-decoder=mp3 --enable-decoder=pcm_s16le --enable-decoder=pcm_s8")
++string(APPEND OPTIONS " --enable-decoder=aac --enable-decoder=aac_latm --enable-decoder=ac3 --enable-decoder=atrac3 --enable-decoder=atrac3p --enable-decoder=atrac3p_ats --enable-decoder=atrac9 --enable-decoder=mp3 --enable-decoder=pcm_pamf --enable-decoder=pcm_s16le --enable-decoder=pcm_s8")
 +string(APPEND OPTIONS " --enable-decoder=mov --enable-decoder=h264 --enable-decoder=mpeg4 --enable-decoder=mpeg2video --enable-decoder=mjpeg --enable-decoder=mjpegb")
 +string(APPEND OPTIONS " --enable-encoder=pcm_s16le --enable-encoder=mp3 --enable-encoder=ac3 --enable-encoder=aac")
 +string(APPEND OPTIONS " --enable-encoder=ffv1 --enable-encoder=mpeg4 --enable-encoder=mjpeg --enable-encoder=h264")
 +string(APPEND OPTIONS " --enable-muxer=avi --enable-muxer=h264 --enable-muxer=mjpeg --enable-muxer=mp4")
-+string(APPEND OPTIONS " --enable-demuxer=h264 --enable-demuxer=m4v --enable-demuxer=mp3 --enable-demuxer=mpegvideo --enable-demuxer=mpegps --enable-demuxer=mjpeg --enable-demuxer=mov")
++string(APPEND OPTIONS " --enable-demuxer=h264 --enable-demuxer=m4v --enable-demuxer=mp3 --enable-demuxer=mpegvideo --enable-demuxer=mpegps --enable-demuxer=mjpeg --enable-demuxer=mov --enable-demuxer=psmf")
 +string(APPEND OPTIONS " --enable-demuxer=avi --enable-demuxer=aac --enable-demuxer=pmp --enable-demuxer=oma --enable-demuxer=pcm_s16le --enable-demuxer=pcm_s8 --enable-demuxer=wav")
-+string(APPEND OPTIONS " --enable-parser=h264 --enable-parser=mpeg4video --enable-parser=mpegaudio --enable-parser=mpegvideo --enable-parser=mjpeg --enable-parser=aac --enable-parser=aac_latm")
++string(APPEND OPTIONS " --enable-parser=h264 --enable-parser=mpeg4video --enable-parser=mpegaudio --enable-parser=mpegvideo --enable-parser=mjpeg --enable-parser=aac --enable-parser=aac_latm --enable-parser=pcm_psmf")
 +string(APPEND OPTIONS " --enable-protocol=file")
 +string(APPEND OPTIONS " --enable-bsf=mjpeg2jpeg")
 +
  if(VCPKG_TARGET_IS_MINGW)
      if(VCPKG_TARGET_ARCHITECTURE STREQUAL "x86")
          string(APPEND OPTIONS " --target-os=mingw32")
-@@ -426,11 +439,7 @@ if("openssl" IN_LIST FEATURES)
+@@ -426,11 +440,7 @@ if("openssl" IN_LIST FEATURES)
      set(OPTIONS "${OPTIONS} --enable-openssl")
      set(WITH_OPENSSL ON)
  else()
@@ -35,7 +43,7 @@ index 6835d95c0c..6f06e402bd 100644
  endif()
  
  if("opus" IN_LIST FEATURES)
-@@ -749,6 +758,11 @@ if (NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
+@@ -749,6 +759,11 @@ if (NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
      # We use response files here as the only known way to handle spaces in paths
      set(crsp "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/cflags.rsp")
      string(REGEX REPLACE "-arch [A-Za-z0-9_]+" "" VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED "${VCPKG_COMBINED_C_FLAGS_RELEASE}")

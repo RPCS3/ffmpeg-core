@@ -1,0 +1,2232 @@
+diff --git a/configure b/configure
+index 1759694274..e04aebb864 100755
+--- a/configure
++++ b/configure
+@@ -3101,6 +3101,7 @@ asv2_encoder_select="aandcttables bswapdsp fdctdsp pixblockdsp"
+ atrac1_decoder_select="sinewin"
+ atrac3p_decoder_select="sinewin"
+ atrac3pal_decoder_select="sinewin"
++atrac3p_ats_decoder_select="atrac3p_ats_parser atrac3p_decoder"
+ av1_decoder_select="atsc_a53 cbs_av1 dovi_rpudec"
+ bink_decoder_select="blockdsp hpeldsp"
+ binkaudio_dct_decoder_select="wma_freqs"
+@@ -3926,6 +3927,7 @@ oga_muxer_select="ogg_muxer"
+ ogg_demuxer_select="dirac_parse"
+ ogv_muxer_select="ogg_muxer"
+ opus_muxer_select="ogg_muxer"
++psmf_demuxer_select="mpeg_demuxer"
+ psp_muxer_select="mov_muxer"
+ rtp_demuxer_select="sdp_demuxer"
+ rtp_muxer_select="iso_writer"
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 1410bd8142..c58b824417 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -910,6 +910,7 @@ OBJS-$(CONFIG_PCM_F64LE_ENCODER)          += pcm.o
+ OBJS-$(CONFIG_PCM_LXF_DECODER)            += pcm.o
+ OBJS-$(CONFIG_PCM_MULAW_DECODER)          += pcm.o
+ OBJS-$(CONFIG_PCM_MULAW_ENCODER)          += pcm.o
++OBJS-$(CONFIG_PCM_PAMF_DECODER)           += pcm-bluray.o
+ OBJS-$(CONFIG_PCM_S8_DECODER)             += pcm.o
+ OBJS-$(CONFIG_PCM_S8_ENCODER)             += pcm.o
+ OBJS-$(CONFIG_PCM_S8_PLANAR_DECODER)      += pcm.o
+@@ -1243,6 +1244,7 @@ OBJS-$(CONFIG_ADX_PARSER)              += adx_parser.o
+ OBJS-$(CONFIG_AHX_PARSER)              += ahx_parser.o
+ OBJS-$(CONFIG_AMR_PARSER)              += amr_parser.o
+ OBJS-$(CONFIG_APV_PARSER)              += apv_parser.o
++OBJS-$(CONFIG_ATRAC3P_ATS_PARSER)      += atrac3plus_ats_parser.o
+ OBJS-$(CONFIG_AV1_PARSER)              += av1_parser.o av1_parse.o
+ OBJS-$(CONFIG_AVS2_PARSER)             += avs2.o avs2_parser.o
+ OBJS-$(CONFIG_AVS3_PARSER)             += avs3_parser.o
+@@ -1287,6 +1289,7 @@ OBJS-$(CONFIG_MPEG4VIDEO_PARSER)       += mpeg4video_parser.o h263.o \
+ OBJS-$(CONFIG_MPEGAUDIO_PARSER)        += mpegaudio_parser.o
+ OBJS-$(CONFIG_MPEGVIDEO_PARSER)        += mpegvideo_parser.o mpeg12data.o
+ OBJS-$(CONFIG_OPUS_PARSER)             += vorbis_data.o
++OBJS-$(CONFIG_PCM_PSMF_PARSER)         += pcm_psmf_parser.o
+ OBJS-$(CONFIG_PNG_PARSER)              += png_parser.o
+ OBJS-$(CONFIG_PNM_PARSER)              += pnm_parser.o pnm.o
+ OBJS-$(CONFIG_PRORES_RAW_PARSER)       += prores_raw_parser.o
+diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
+index 695214f192..c67505338f 100644
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -456,6 +456,7 @@ extern const FFCodec ff_atrac3_decoder;
+ extern const FFCodec ff_atrac3al_decoder;
+ extern const FFCodec ff_atrac3p_decoder;
+ extern const FFCodec ff_atrac3pal_decoder;
++extern const FFCodec ff_atrac3p_ats_decoder;
+ extern const FFCodec ff_atrac9_decoder;
+ extern const FFCodec ff_binkaudio_dct_decoder;
+ extern const FFCodec ff_binkaudio_rdft_decoder;
+@@ -585,6 +586,7 @@ extern const FFCodec ff_pcm_f64le_decoder;
+ extern const FFCodec ff_pcm_lxf_decoder;
+ extern const FFCodec ff_pcm_mulaw_encoder;
+ extern const FFCodec ff_pcm_mulaw_decoder;
++extern const FFCodec ff_pcm_pamf_decoder;
+ extern const FFCodec ff_pcm_s8_encoder;
+ extern const FFCodec ff_pcm_s8_decoder;
+ extern const FFCodec ff_pcm_s8_planar_encoder;
+diff --git a/libavcodec/atrac3plus.h b/libavcodec/atrac3plus.h
+index aa949a7e4c..adbbce3bd8 100644
+--- a/libavcodec/atrac3plus.h
++++ b/libavcodec/atrac3plus.h
+@@ -48,6 +48,10 @@
+ /** Global constants */
+ #define ATRAC3P_POWER_COMP_OFF  15  ///< disable power compensation
+ 
++/** ATS header constants */
++#define ATRAC3P_ATS_SYNC_WORD    0x0fd0
++#define ATRAC3P_ATS_HEADER_SIZE  8
++
+ /** ATRAC3+ channel unit types */
+ enum Atrac3pChannelUnitTypes {
+     CH_UNIT_MONO       = 0, ///< unit containing one coded channel
+diff --git a/libavcodec/atrac3plus_ats_parser.c b/libavcodec/atrac3plus_ats_parser.c
+new file mode 100644
+index 0000000000..cad5145e37
+--- /dev/null
++++ b/libavcodec/atrac3plus_ats_parser.c
+@@ -0,0 +1,157 @@
++/*
++ * ATRAC3+ ATS parser
++ * Copyright (c) 2026 Simon Capriotti
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include "atrac3plus.h"
++#include "atrac3plus_ats_parser.h"
++#include "codec_id.h"
++#include "get_bits.h"
++#include "parser.h"
++#include "parser_internal.h"
++
++int ff_atrac3p_ats_parse_header(const uint8_t *buf, int buf_size, AVCodecContext *avctx,
++                                Atrac3pAtsDownmixLevels *downmix_levels)
++{
++    static const uint16_t ch_layouts_tab[7] = {
++        AV_CH_LAYOUT_MONO,
++        AV_CH_LAYOUT_STEREO,
++        AV_CH_LAYOUT_SURROUND,
++        AV_CH_LAYOUT_4POINT0,
++        AV_CH_LAYOUT_5POINT1_BACK,
++        AV_CH_LAYOUT_6POINT1_BACK,
++        AV_CH_LAYOUT_7POINT1
++    };
++    static const uint16_t sample_rate_tab[3] = { 32000, 44100, 48000 };
++
++    GetBitContext gb;
++
++    if (buf_size < ATRAC3P_ATS_HEADER_SIZE) {
++        av_log(avctx, AV_LOG_ERROR, "buf_size is too small\n");
++        return AVERROR_INVALIDDATA;
++    }
++
++    const int ret = init_get_bits8(&gb, buf, buf_size);
++    av_assert0(ret == 0);
++
++    const uint16_t sync_word = get_bits(&gb, 16);
++    if (sync_word != ATRAC3P_ATS_SYNC_WORD) {
++        av_log(avctx, AV_LOG_ERROR, "Invalid sync word in the ATS header (%04X)\n",
++               sync_word);
++        return AVERROR_INVALIDDATA;
++    }
++
++    const uint8_t sample_rate_idc = get_bits(&gb, 3);
++    if (sample_rate_idc >= FF_ARRAY_ELEMS(sample_rate_tab)) {
++        av_log(avctx, AV_LOG_ERROR, "Invalid sample rate indicator in the ATS header (%d)\n",
++               sample_rate_idc);
++        return AVERROR_INVALIDDATA;
++    }
++
++    const uint16_t sample_rate = sample_rate_tab[sample_rate_idc];
++
++    const uint8_t channel_config_idc = get_bits(&gb, 3);
++    if (channel_config_idc - 1 >= FF_ARRAY_ELEMS(ch_layouts_tab)) {
++        av_log(avctx, AV_LOG_ERROR, "Invalid channel configuration indicator in the ATS header (%d)\n",
++               channel_config_idc);
++        return AVERROR_INVALIDDATA;
++    }
++
++    const uint16_t ch_layout_mask = ch_layouts_tab[channel_config_idc - 1];
++
++    const uint16_t block_align = (get_bits(&gb, 10) + 1) * 8 + ATRAC3P_ATS_HEADER_SIZE;
++
++    if (downmix_levels) {
++        downmix_levels->front_downmix_level = get_bits(&gb, 3);
++        downmix_levels->center_downmix_level = get_bits(&gb, 3);
++        downmix_levels->back_downmix_level = get_bits(&gb, 3);
++        downmix_levels->lfe_downmix_level = get_bits(&gb, 3);
++        downmix_levels->side_downmix_level = get_bits(&gb, 3);
++    }
++
++    avctx->sample_rate = sample_rate;
++    av_channel_layout_uninit(&avctx->ch_layout);
++    av_channel_layout_from_mask(&avctx->ch_layout, ch_layout_mask);
++    avctx->block_align = block_align;
++    avctx->frame_size = ATRAC3P_FRAME_SAMPLES;
++    avctx->bit_rate = block_align * CHAR_BIT * sample_rate / ATRAC3P_FRAME_SAMPLES;
++    return 0;
++}
++
++typedef struct Atrac3pAtsParseContext {
++    ParseContext pc;
++    int remaining_size;
++} Atrac3pAtsParseContext;
++
++static int parse(AVCodecParserContext *s1, AVCodecContext *avctx,
++                 const uint8_t **poutbuf, int *poutbuf_size,
++                 const uint8_t *buf, int buf_size)
++{
++    Atrac3pAtsParseContext *const s = s1->priv_data;
++    int next = END_NOT_FOUND;
++
++    s1->duration  = ATRAC3P_FRAME_SAMPLES;
++
++    if (s1->flags & PARSER_FLAG_COMPLETE_FRAMES) {
++        (void)ff_atrac3p_ats_parse_header(buf, buf_size, avctx, NULL);
++        next = buf_size;
++    } else {
++        if (!s->pc.frame_start_found)
++            for (int i = 0; i < buf_size; i++) {
++                s->pc.state64 = (s->pc.state64 << 8) | buf[i];
++                if (s->pc.state64 >> 48 == ATRAC3P_ATS_SYNC_WORD) {
++                    uint8_t tmp_buf[ATRAC3P_ATS_HEADER_SIZE + AV_INPUT_BUFFER_PADDING_SIZE];
++                    AV_WB64(tmp_buf, s->pc.state64);
++                    if (ff_atrac3p_ats_parse_header(tmp_buf, ATRAC3P_ATS_HEADER_SIZE, avctx, NULL) < 0)
++                        continue;
++
++                    s->pc.frame_start_found = 1;
++                    s->remaining_size = avctx->block_align + i - 7;
++                    break;
++                }
++            }
++
++        if (s->pc.frame_start_found)
++            if (s->remaining_size <= buf_size) {
++                next = s->remaining_size;
++                s->remaining_size = 0;
++                s->pc.frame_start_found = 0;
++                s->pc.state64 = 0;
++            } else {
++                s->remaining_size -= buf_size;
++            }
++
++        if (ff_combine_frame(&s->pc, next, &buf, &buf_size) < 0) {
++            *poutbuf      = NULL;
++            *poutbuf_size = 0;
++            return buf_size;
++        }
++    }
++
++    *poutbuf      = buf;
++    *poutbuf_size = buf_size;
++    return next;
++}
++
++const FFCodecParser ff_atrac3p_ats_parser = {
++    .codec_ids      = { AV_CODEC_ID_ATRAC3P_ATS },
++    .priv_data_size = sizeof(Atrac3pAtsParseContext),
++    .parse          = parse,
++    .close          = ff_parse_close,
++};
+diff --git a/libavcodec/atrac3plus_ats_parser.h b/libavcodec/atrac3plus_ats_parser.h
+new file mode 100644
+index 0000000000..e3be20eb45
+--- /dev/null
++++ b/libavcodec/atrac3plus_ats_parser.h
+@@ -0,0 +1,55 @@
++/*
++ * ATRAC3plus ATS parser
++ *
++ * Copyright (c) 2026 Simon Capriotti
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#ifndef AVCODEC_ATRAC3PLUS_ATS_PARSER_H
++#define AVCODEC_ATRAC3PLUS_ATS_PARSER_H
++
++#include <stdint.h>
++
++/* TODO downmix levels from 0 to 7 are the following:
++ -0dB, -1.5dB, -3dB, -4.5dB, -6dB, -7.5dB, -9dB, -infinity dB */
++typedef struct Atrac3pAtsDownmixLevels {
++    uint8_t front_downmix_level : 3;
++    uint8_t center_downmix_level : 3;
++    uint8_t back_downmix_level : 3;
++    uint8_t lfe_downmix_level : 3;
++    uint8_t side_downmix_level : 3;
++} Atrac3pAtsDownmixLevels;
++
++/**
++ * Parses the ATS header and updates the codec context with the values from the
++ * header.
++ *
++ * Optionally retrieves downmix levels from the header.
++ *
++ * @param buf            Input buffer containing the header
++ * @param buf_size       Input buffer size
++ * @param avctx          Codec context to update
++ * @param downmix_levels Will contain the downmix levels after parsing.
++ *                       Can be NULL
++ * @retval 0                   Success
++ * @retval AVERROR_INVALIDDATA The header contained an invalid value
++ */
++int ff_atrac3p_ats_parse_header(const uint8_t *buf, int buf_size, AVCodecContext *avctx,
++                                Atrac3pAtsDownmixLevels *downmix_levels);
++
++#endif /* AVCODEC_ATRAC3PLUS_ATS_PARSER_H */
+diff --git a/libavcodec/atrac3plusdec.c b/libavcodec/atrac3plusdec.c
+index 9696a523be..aa0bc78bc1 100644
+--- a/libavcodec/atrac3plusdec.c
++++ b/libavcodec/atrac3plusdec.c
+@@ -2,6 +2,7 @@
+  * ATRAC3+ compatible decoder
+  *
+  * Copyright (c) 2010-2013 Maxim Poliakovski
++ * Copyright (c) 2026 Simon Capriotti
+  *
+  * This file is part of FFmpeg.
+  *
+@@ -25,7 +26,9 @@
+  * Sony ATRAC3+ compatible decoder.
+  *
+  * Container formats used to store its data:
+- * RIFF WAV (.at3) and Sony OpenMG (.oma, .aa3).
++ * RIFF WAV (.at3, .atx), Sony OpenMG (.oma, .aa3),
++ * and MPEG-PS (PSP Movie Format (for UMD Video): .mps,
++ * PSP Movie Format (for games): .pmf, PlayStation Advanced Movie Format: .pam)
+  *
+  * Technical description of this codec can be found here:
+  * http://wiki.multimedia.cx/index.php?title=ATRAC3plus
+@@ -34,6 +37,8 @@
+  * for their precious technical help!
+  */
+ 
++#include "config_components.h"
++
+ #include <stdint.h>
+ #include <string.h>
+ 
+@@ -169,16 +174,53 @@ static av_cold void atrac3p_init_static(void)
+     ff_atrac3p_init_dsp_static();
+ }
+ 
++static av_cold int init_ch_units(ATRAC3PContext *ctx, AVCodecContext *avctx)
++{
++    int i, ch, ret;
++
++    if ((ret = set_channel_params(ctx, avctx)) < 0)
++        return ret;
++
++    ctx->ch_units = av_calloc(ctx->num_channel_blocks, sizeof(*ctx->ch_units));
++
++    if (!ctx->ch_units) {
++        return AVERROR(ENOMEM);
++    }
++
++    for (i = 0; i < ctx->num_channel_blocks; i++) {
++        for (ch = 0; ch < 2; ch++) {
++            ctx->ch_units[i].channels[ch].ch_num          = ch;
++            ctx->ch_units[i].channels[ch].wnd_shape       = &ctx->ch_units[i].channels[ch].wnd_shape_hist[0][0];
++            ctx->ch_units[i].channels[ch].wnd_shape_prev  = &ctx->ch_units[i].channels[ch].wnd_shape_hist[1][0];
++            ctx->ch_units[i].channels[ch].gain_data       = &ctx->ch_units[i].channels[ch].gain_data_hist[0][0];
++            ctx->ch_units[i].channels[ch].gain_data_prev  = &ctx->ch_units[i].channels[ch].gain_data_hist[1][0];
++            ctx->ch_units[i].channels[ch].tones_info      = &ctx->ch_units[i].channels[ch].tones_info_hist[0][0];
++            ctx->ch_units[i].channels[ch].tones_info_prev = &ctx->ch_units[i].channels[ch].tones_info_hist[1][0];
++        }
++
++        ctx->ch_units[i].waves_info      = &ctx->ch_units[i].wave_synth_hist[0];
++        ctx->ch_units[i].waves_info_prev = &ctx->ch_units[i].wave_synth_hist[1];
++    }
++
++    return 0;
++}
++
+ static av_cold int atrac3p_decode_init(AVCodecContext *avctx)
+ {
+     static AVOnce init_static_once = AV_ONCE_INIT;
+     ATRAC3PContext *ctx = avctx->priv_data;
+     float scale;
+-    int i, ch, ret;
++    int ret;
++
++    if (avctx->codec_id != AV_CODEC_ID_ATRAC3P_ATS) {
++        if (!avctx->block_align) {
++            av_log(avctx, AV_LOG_ERROR, "block_align is not set\n");
++            return AVERROR(EINVAL);
++        }
+ 
+-    if (!avctx->block_align) {
+-        av_log(avctx, AV_LOG_ERROR, "block_align is not set\n");
+-        return AVERROR(EINVAL);
++        ret = init_ch_units(ctx, avctx);
++        if (ret < 0)
++            return ret;
+     }
+ 
+     /* initialize IPQF */
+@@ -196,30 +238,10 @@ static av_cold int atrac3p_decode_init(AVCodecContext *avctx)
+ 
+     ff_atrac_init_gain_compensation(&ctx->gainc_ctx, 6, 2);
+ 
+-    if ((ret = set_channel_params(ctx, avctx)) < 0)
+-        return ret;
+-
+-    ctx->ch_units = av_calloc(ctx->num_channel_blocks, sizeof(*ctx->ch_units));
+     ctx->fdsp = avpriv_float_dsp_alloc(avctx->flags & AV_CODEC_FLAG_BITEXACT);
+ 
+-    if (!ctx->ch_units || !ctx->fdsp) {
++    if (!ctx->fdsp)
+         return AVERROR(ENOMEM);
+-    }
+-
+-    for (i = 0; i < ctx->num_channel_blocks; i++) {
+-        for (ch = 0; ch < 2; ch++) {
+-            ctx->ch_units[i].channels[ch].ch_num          = ch;
+-            ctx->ch_units[i].channels[ch].wnd_shape       = &ctx->ch_units[i].channels[ch].wnd_shape_hist[0][0];
+-            ctx->ch_units[i].channels[ch].wnd_shape_prev  = &ctx->ch_units[i].channels[ch].wnd_shape_hist[1][0];
+-            ctx->ch_units[i].channels[ch].gain_data       = &ctx->ch_units[i].channels[ch].gain_data_hist[0][0];
+-            ctx->ch_units[i].channels[ch].gain_data_prev  = &ctx->ch_units[i].channels[ch].gain_data_hist[1][0];
+-            ctx->ch_units[i].channels[ch].tones_info      = &ctx->ch_units[i].channels[ch].tones_info_hist[0][0];
+-            ctx->ch_units[i].channels[ch].tones_info_prev = &ctx->ch_units[i].channels[ch].tones_info_hist[1][0];
+-        }
+-
+-        ctx->ch_units[i].waves_info      = &ctx->ch_units[i].wave_synth_hist[0];
+-        ctx->ch_units[i].waves_info_prev = &ctx->ch_units[i].wave_synth_hist[1];
+-    }
+ 
+     avctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+ 
+@@ -414,7 +436,9 @@ static int atrac3p_decode_frame(AVCodecContext *avctx, AVFrame *frame,
+ 
+     *got_frame_ptr = 1;
+ 
+-    return avctx->codec_id == AV_CODEC_ID_ATRAC3P ? FFMIN(avctx->block_align, avpkt->size) : avpkt->size;
++    return avctx->codec_id == AV_CODEC_ID_ATRAC3P ? FFMIN(avctx->block_align, avpkt->size) :
++           avctx->codec_id == AV_CODEC_ID_ATRAC3P_ATS ? FFMIN(avctx->block_align - ATRAC3P_ATS_HEADER_SIZE, avpkt->size) :
++           avpkt->size;
+ }
+ 
+ const FFCodec ff_atrac3p_decoder = {
+@@ -442,3 +466,64 @@ const FFCodec ff_atrac3pal_decoder = {
+     .close          = atrac3p_decode_close,
+     FF_CODEC_DECODE_CB(atrac3p_decode_frame),
+ };
++
++#if CONFIG_ATRAC3P_ATS_DECODER
++
++#include "atrac3plus_ats_parser.h"
++
++typedef struct ATRAC3PATSContext {
++    ATRAC3PContext atrac3p_ctx;
++    uint64_t prev_header;
++} ATRAC3PATSContext;
++
++static int atrac3p_ats_decode_frame(AVCodecContext *avctx, AVFrame *frame,
++                                    int *got_frame_ptr, AVPacket *avpkt)
++{
++    ATRAC3PATSContext *const ctx = avctx->priv_data;
++
++    if (avpkt->size < ATRAC3P_ATS_HEADER_SIZE) {
++        av_log(avctx, AV_LOG_ERROR, "Packet too small!\n");
++        return AVERROR_INVALIDDATA;
++    }
++
++    const uint64_t ats_header = AV_RB64(avpkt->data);
++    if (ats_header != ctx->prev_header) {
++        Atrac3pAtsDownmixLevels downmix_levels;
++
++        int ret = ff_atrac3p_ats_parse_header(avpkt->data, avpkt->size, avctx, &downmix_levels);
++        if (ret < 0)
++            return ret;
++
++        av_freep(&ctx->atrac3p_ctx.ch_units);
++        ret = init_ch_units(&ctx->atrac3p_ctx, avctx);
++        if (ret < 0)
++            return ret;
++
++        if (downmix_levels.front_downmix_level || downmix_levels.center_downmix_level ||
++            downmix_levels.back_downmix_level || downmix_levels.lfe_downmix_level ||
++            downmix_levels.side_downmix_level)
++            avpriv_report_missing_feature(avctx, "Downmixing");
++
++        ctx->prev_header = ats_header;
++    }
++
++    avpkt->data += ATRAC3P_ATS_HEADER_SIZE;
++    avpkt->size -= ATRAC3P_ATS_HEADER_SIZE;
++
++    return atrac3p_decode_frame(avctx, frame, got_frame_ptr, avpkt);
++}
++
++const FFCodec ff_atrac3p_ats_decoder = {
++    .p.name         = "atrac3plus_ats",
++    CODEC_LONG_NAME("ATRAC3+ ATS (Adaptive TRansform Acoustic Coding 3+ ATS syntax)"),
++    .p.type         = AVMEDIA_TYPE_AUDIO,
++    .p.id           = AV_CODEC_ID_ATRAC3P_ATS,
++    .p.capabilities = AV_CODEC_CAP_CHANNEL_CONF | AV_CODEC_CAP_DR1,
++    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
++    .priv_data_size = sizeof(ATRAC3PATSContext),
++    .init           = atrac3p_decode_init,
++    .close          = atrac3p_decode_close,
++    FF_CODEC_DECODE_CB(atrac3p_ats_decode_frame),
++};
++
++#endif
+diff --git a/libavcodec/codec_desc.c b/libavcodec/codec_desc.c
+index a9f21f8152..4c4df993bc 100644
+--- a/libavcodec/codec_desc.c
++++ b/libavcodec/codec_desc.c
+@@ -2263,6 +2263,13 @@ static const AVCodecDescriptor codec_descriptors[] = {
+         .long_name = NULL_IF_CONFIG_SMALL("PCM SGA"),
+         .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSLESS,
+     },
++    {
++        .id        = AV_CODEC_ID_PCM_PAMF,
++        .type      = AVMEDIA_TYPE_AUDIO,
++        .name      = "pcm_pamf",
++        .long_name = NULL_IF_CONFIG_SMALL("PCM signed 16|20|24-bit big-endian for PAMF streams"),
++        .props     = AV_CODEC_PROP_LOSSLESS,
++    },
+ 
+     /* various ADPCM codecs */
+     {
+@@ -3567,6 +3574,13 @@ static const AVCodecDescriptor codec_descriptors[] = {
+         .long_name = NULL_IF_CONFIG_SMALL("CRI AHX"),
+         .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSY,
+     },
++    {
++        .id        = AV_CODEC_ID_ATRAC3P_ATS,
++        .type      = AVMEDIA_TYPE_AUDIO,
++        .name      = "atrac3plus_ats",
++        .long_name = NULL_IF_CONFIG_SMALL("ATRAC3+ ATS (Adaptive TRansform Acoustic Coding 3+ ATS Syntax)"),
++        .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSY,
++    },
+ 
+     /* subtitle codecs */
+     {
+diff --git a/libavcodec/codec_id.h b/libavcodec/codec_id.h
+index 6529f0a6bc..fc2457a3d0 100644
+--- a/libavcodec/codec_id.h
++++ b/libavcodec/codec_id.h
+@@ -372,6 +372,7 @@ enum AVCodecID {
+     AV_CODEC_ID_PCM_F24LE,
+     AV_CODEC_ID_PCM_VIDC,
+     AV_CODEC_ID_PCM_SGA,
++    AV_CODEC_ID_PCM_PAMF,
+ 
+     /* various ADPCM codecs */
+     AV_CODEC_ID_ADPCM_IMA_QT = 0x11000,
+@@ -566,6 +567,7 @@ enum AVCodecID {
+     AV_CODEC_ID_LC3,
+     AV_CODEC_ID_G728,
+     AV_CODEC_ID_AHX,
++    AV_CODEC_ID_ATRAC3P_ATS,
+ 
+     /* subtitle codecs */
+     AV_CODEC_ID_FIRST_SUBTITLE = 0x17000,          ///< A dummy ID pointing at the start of subtitle codecs.
+diff --git a/libavcodec/parsers.c b/libavcodec/parsers.c
+index 162b96cb69..d210e4ad17 100644
+--- a/libavcodec/parsers.c
++++ b/libavcodec/parsers.c
+@@ -44,6 +44,7 @@ extern const FFCodecParser ff_adx_parser;
+ extern const FFCodecParser ff_ahx_parser;
+ extern const FFCodecParser ff_amr_parser;
+ extern const FFCodecParser ff_apv_parser;
++extern const FFCodecParser ff_atrac3p_ats_parser;
+ extern const FFCodecParser ff_av1_parser;
+ extern const FFCodecParser ff_avs2_parser;
+ extern const FFCodecParser ff_avs3_parser;
+@@ -86,6 +87,7 @@ extern const FFCodecParser ff_mpeg4video_parser;
+ extern const FFCodecParser ff_mpegaudio_parser;
+ extern const FFCodecParser ff_mpegvideo_parser;
+ extern const FFCodecParser ff_opus_parser;
++extern const FFCodecParser ff_pcm_psmf_parser;
+ extern const FFCodecParser ff_prores_parser;
+ extern const FFCodecParser ff_png_parser;
+ extern const FFCodecParser ff_pnm_parser;
+diff --git a/libavcodec/pcm-bluray.c b/libavcodec/pcm-bluray.c
+index 194224c67e..a66b0e5249 100644
+--- a/libavcodec/pcm-bluray.c
++++ b/libavcodec/pcm-bluray.c
+@@ -1,6 +1,7 @@
+ /*
+- * LPCM codecs for PCM format found in Blu-ray PCM streams
++ * LPCM codecs for PCM format found in Blu-ray and PAMF PCM streams
+  * Copyright (c) 2009, 2013 Christian Schmidt
++ * Copyright (c) 2026 Simon Capriotti
+  *
+  * This file is part of FFmpeg.
+  *
+@@ -21,9 +22,11 @@
+ 
+ /**
+  * @file
+- * PCM codec for Blu-ray PCM audio tracks
++ * PCM codec for Blu-ray and PAMF PCM audio tracks
+  */
+ 
++#include "config_components.h"
++
+ #include "libavutil/channel_layout.h"
+ #include "avcodec.h"
+ #include "bytestream.h"
+@@ -46,84 +49,8 @@
+  * 3/4+lfe  L     R    C    LS    Rls   Rrs  RS   lfe
+  */
+ 
+-/**
+- * Parse the header of a LPCM frame read from a Blu-ray MPEG-TS stream
+- * @param avctx the codec context
+- * @param header pointer to the first four bytes of the data packet
+- */
+-static int pcm_bluray_parse_header(AVCodecContext *avctx,
+-                                   const uint8_t *header)
+-{
+-    static const uint8_t bits_per_samples[4] = { 0, 16, 20, 24 };
+-    static const AVChannelLayout channel_layouts[16] = {
+-        { 0 },                     AV_CHANNEL_LAYOUT_MONO,     { 0 },
+-        AV_CHANNEL_LAYOUT_STEREO,  AV_CHANNEL_LAYOUT_SURROUND, AV_CHANNEL_LAYOUT_2_1,
+-        AV_CHANNEL_LAYOUT_4POINT0, AV_CHANNEL_LAYOUT_2_2,      AV_CHANNEL_LAYOUT_5POINT0,
+-        AV_CHANNEL_LAYOUT_5POINT1, AV_CHANNEL_LAYOUT_7POINT0,  AV_CHANNEL_LAYOUT_7POINT1,
+-        { 0 }, { 0 }, { 0 }, { 0 },
+-    };
+-    uint8_t channel_layout = header[2] >> 4;
+-
+-    if (avctx->debug & FF_DEBUG_PICT_INFO)
+-        ff_dlog(avctx, "pcm_bluray_parse_header: header = %02x%02x%02x%02x\n",
+-                header[0], header[1], header[2], header[3]);
+-
+-    /* get the sample depth and derive the sample format from it */
+-    avctx->bits_per_coded_sample = bits_per_samples[header[3] >> 6];
+-    if (!(avctx->bits_per_coded_sample == 16 || avctx->bits_per_coded_sample == 24)) {
+-        av_log(avctx, AV_LOG_ERROR, "unsupported sample depth (%d)\n", avctx->bits_per_coded_sample);
+-        return AVERROR_INVALIDDATA;
+-    }
+-    avctx->sample_fmt = avctx->bits_per_coded_sample == 16 ? AV_SAMPLE_FMT_S16
+-                                                           : AV_SAMPLE_FMT_S32;
+-    if (avctx->sample_fmt == AV_SAMPLE_FMT_S32)
+-        avctx->bits_per_raw_sample = avctx->bits_per_coded_sample;
+-
+-    /* get the sample rate. Not all values are used. */
+-    switch (header[2] & 0x0f) {
+-    case 1:
+-        avctx->sample_rate = 48000;
+-        break;
+-    case 4:
+-        avctx->sample_rate = 96000;
+-        break;
+-    case 5:
+-        avctx->sample_rate = 192000;
+-        break;
+-    default:
+-        avctx->sample_rate = 0;
+-        av_log(avctx, AV_LOG_ERROR, "reserved sample rate (%d)\n",
+-               header[2] & 0x0f);
+-        return AVERROR_INVALIDDATA;
+-    }
+-
+-    /*
+-     * get the channel number (and mapping). Not all values are used.
+-     * It must be noted that the number of channels in the MPEG stream can
+-     * differ from the actual meaningful number, e.g. mono audio still has two
+-     * channels, one being empty.
+-     */
+-    av_channel_layout_uninit(&avctx->ch_layout);
+-    avctx->ch_layout = channel_layouts[channel_layout];
+-    if (!avctx->ch_layout.nb_channels) {
+-        av_log(avctx, AV_LOG_ERROR, "reserved channel configuration (%d)\n",
+-               channel_layout);
+-        return AVERROR_INVALIDDATA;
+-    }
+-
+-    avctx->bit_rate = FFALIGN(avctx->ch_layout.nb_channels, 2) * avctx->sample_rate *
+-                      avctx->bits_per_coded_sample;
+-
+-    if (avctx->debug & FF_DEBUG_PICT_INFO)
+-        ff_dlog(avctx,
+-                "pcm_bluray_parse_header: %d channels, %d bits per sample, %d Hz, %"PRId64" bit/s\n",
+-                avctx->ch_layout.nb_channels, avctx->bits_per_coded_sample,
+-                avctx->sample_rate, avctx->bit_rate);
+-    return 0;
+-}
+-
+-static int pcm_bluray_decode_frame(AVCodecContext *avctx, AVFrame *frame,
+-                                   int *got_frame_ptr, AVPacket *avpkt)
++static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
++                        int *got_frame_ptr, AVPacket *avpkt)
+ {
+     const uint8_t *src = avpkt->data;
+     int buf_size = avpkt->size;
+@@ -133,16 +60,6 @@ static int pcm_bluray_decode_frame(AVCodecContext *avctx, AVFrame *frame,
+     int16_t *dst16;
+     int32_t *dst32;
+ 
+-    if (buf_size < 4) {
+-        av_log(avctx, AV_LOG_ERROR, "PCM packet too small\n");
+-        return AVERROR_INVALIDDATA;
+-    }
+-
+-    if ((retval = pcm_bluray_parse_header(avctx, src)))
+-        return retval;
+-    src += 4;
+-    buf_size -= 4;
+-
+     bytestream2_init(&gb, src, buf_size);
+ 
+     /* There's always an even number of channels in the source */
+@@ -297,7 +214,103 @@ static int pcm_bluray_decode_frame(AVCodecContext *avctx, AVFrame *frame,
+     if (avctx->debug & FF_DEBUG_BITSTREAM)
+         ff_dlog(avctx, "pcm_bluray_decode_frame: decoded %d -> %d bytes\n",
+                 retval, buf_size);
+-    return retval + 4;
++    return retval;
++}
++
++#if CONFIG_PCM_BLURAY_DECODER
++
++/**
++ * Parse the header of a LPCM frame read from a Blu-ray MPEG-TS stream
++ * @param avctx the codec context
++ * @param header pointer to the first four bytes of the data packet
++ */
++static int pcm_bluray_parse_header(AVCodecContext *avctx,
++                                   const uint8_t *header)
++{
++    static const uint8_t bits_per_samples[4] = { 0, 16, 20, 24 };
++    static const AVChannelLayout channel_layouts[16] = {
++        { 0 },                     AV_CHANNEL_LAYOUT_MONO,     { 0 },
++        AV_CHANNEL_LAYOUT_STEREO,  AV_CHANNEL_LAYOUT_SURROUND, AV_CHANNEL_LAYOUT_2_1,
++        AV_CHANNEL_LAYOUT_4POINT0, AV_CHANNEL_LAYOUT_2_2,      AV_CHANNEL_LAYOUT_5POINT0,
++        AV_CHANNEL_LAYOUT_5POINT1, AV_CHANNEL_LAYOUT_7POINT0,  AV_CHANNEL_LAYOUT_7POINT1,
++        { 0 }, { 0 }, { 0 }, { 0 },
++    };
++    uint8_t channel_layout = header[2] >> 4;
++
++    if (avctx->debug & FF_DEBUG_PICT_INFO)
++        ff_dlog(avctx, "pcm_bluray_parse_header: header = %02x%02x%02x%02x\n",
++                header[0], header[1], header[2], header[3]);
++
++    /* get the sample depth and derive the sample format from it */
++    avctx->bits_per_coded_sample = bits_per_samples[header[3] >> 6];
++    if (!(avctx->bits_per_coded_sample == 16 || avctx->bits_per_coded_sample == 24)) {
++        av_log(avctx, AV_LOG_ERROR, "unsupported sample depth (%d)\n", avctx->bits_per_coded_sample);
++        return AVERROR_INVALIDDATA;
++    }
++    avctx->sample_fmt = avctx->bits_per_coded_sample == 16 ? AV_SAMPLE_FMT_S16
++                                                           : AV_SAMPLE_FMT_S32;
++    if (avctx->sample_fmt == AV_SAMPLE_FMT_S32)
++        avctx->bits_per_raw_sample = avctx->bits_per_coded_sample;
++
++    /* get the sample rate. Not all values are used. */
++    switch (header[2] & 0x0f) {
++    case 1:
++        avctx->sample_rate = 48000;
++        break;
++    case 4:
++        avctx->sample_rate = 96000;
++        break;
++    case 5:
++        avctx->sample_rate = 192000;
++        break;
++    default:
++        avctx->sample_rate = 0;
++        av_log(avctx, AV_LOG_ERROR, "reserved sample rate (%d)\n",
++               header[2] & 0x0f);
++        return AVERROR_INVALIDDATA;
++    }
++
++    /*
++     * get the channel number (and mapping). Not all values are used.
++     * It must be noted that the number of channels in the MPEG stream can
++     * differ from the actual meaningful number, e.g. mono audio still has two
++     * channels, one being empty.
++     */
++    av_channel_layout_uninit(&avctx->ch_layout);
++    avctx->ch_layout = channel_layouts[channel_layout];
++    if (!avctx->ch_layout.nb_channels) {
++        av_log(avctx, AV_LOG_ERROR, "reserved channel configuration (%d)\n",
++               channel_layout);
++        return AVERROR_INVALIDDATA;
++    }
++
++    avctx->bit_rate = FFALIGN(avctx->ch_layout.nb_channels, 2) * avctx->sample_rate *
++                      avctx->bits_per_coded_sample;
++
++    if (avctx->debug & FF_DEBUG_PICT_INFO)
++        ff_dlog(avctx,
++                "pcm_bluray_parse_header: %d channels, %d bits per sample, %d Hz, %"PRId64" bit/s\n",
++                avctx->ch_layout.nb_channels, avctx->bits_per_coded_sample,
++                avctx->sample_rate, avctx->bit_rate);
++    return 0;
++}
++
++static int pcm_bluray_decode_frame(AVCodecContext *avctx, AVFrame *frame,
++                                   int *got_frame_ptr, AVPacket *avpkt)
++{
++    int retval;
++
++    if (avpkt->size < 4) {
++        av_log(avctx, AV_LOG_ERROR, "PCM packet too small\n");
++        return AVERROR_INVALIDDATA;
++    }
++
++    if ((retval = pcm_bluray_parse_header(avctx, avpkt->data)))
++        return retval;
++
++    avpkt->data += 4;
++    avpkt->size -= 4;
++    return decode_frame(avctx, frame, got_frame_ptr, avpkt);
+ }
+ 
+ const FFCodec ff_pcm_bluray_decoder = {
+@@ -308,3 +321,60 @@ const FFCodec ff_pcm_bluray_decoder = {
+     FF_CODEC_DECODE_CB(pcm_bluray_decode_frame),
+     .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
+ };
++
++#endif
++
++#if CONFIG_PCM_PAMF_DECODER
++
++static av_cold int pcm_pamf_init_decode(AVCodecContext *avctx)
++{
++    switch (avctx->bits_per_coded_sample) {
++    case 16:
++        avctx->sample_fmt = AV_SAMPLE_FMT_S16;
++        break;
++    case 20:
++    case 24:
++        avctx->sample_fmt = AV_SAMPLE_FMT_S32;
++        break;
++    default:
++        av_log(avctx, AV_LOG_FATAL, "Invalid sample depth (%d)\n",
++               avctx->bits_per_coded_sample);
++        return AVERROR(EINVAL);
++    }
++
++    avctx->bits_per_raw_sample = avctx->bits_per_coded_sample;
++
++    switch (avctx->ch_layout.u.mask) {
++    case AV_CH_LAYOUT_MONO:
++    case AV_CH_LAYOUT_STEREO:
++    case AV_CH_LAYOUT_SURROUND:
++    case AV_CH_LAYOUT_2_1:
++    case AV_CH_LAYOUT_4POINT0:
++    case AV_CH_LAYOUT_2_2:
++    case AV_CH_LAYOUT_5POINT0:
++    case AV_CH_LAYOUT_5POINT1:
++    case AV_CH_LAYOUT_7POINT0:
++    case AV_CH_LAYOUT_7POINT1:
++        break;
++    default:
++        av_log(avctx, AV_LOG_FATAL, "Invalid channel layout (%lX)\n",
++               avctx->ch_layout.u.mask);
++        return AVERROR(EINVAL);
++    }
++
++    avctx->bit_rate = FFALIGN(avctx->ch_layout.nb_channels, 2) *
++                      avctx->sample_rate * avctx->bits_per_coded_sample;
++    return 0;
++}
++
++const FFCodec ff_pcm_pamf_decoder = {
++    .p.name         = "pcm_pamf",
++    CODEC_LONG_NAME("PCM signed 16|20|24-bit big-endian for PAMF streams"),
++    .p.type         = AVMEDIA_TYPE_AUDIO,
++    .p.id           = AV_CODEC_ID_PCM_PAMF,
++    .init           = pcm_pamf_init_decode,
++    FF_CODEC_DECODE_CB(decode_frame),
++    .p.capabilities = AV_CODEC_CAP_DR1,
++};
++
++#endif
+diff --git a/libavcodec/pcm_psmf_parser.c b/libavcodec/pcm_psmf_parser.c
+new file mode 100644
+index 0000000000..57af69551c
+--- /dev/null
++++ b/libavcodec/pcm_psmf_parser.c
+@@ -0,0 +1,57 @@
++/*
++ * PCM PSMF packetizer
++ * Copyright (c) 2026 Simon Capriotti
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include "codec_id.h"
++#include "parser.h"
++#include "parser_internal.h"
++
++static int parse(AVCodecParserContext *s, AVCodecContext *avctx,
++                 const uint8_t **poutbuf, int *poutbuf_size,
++                 const uint8_t *buf, int buf_size)
++{
++    ParseContext *const pc = s->priv_data;
++
++    *poutbuf      = NULL;
++    *poutbuf_size = 0;
++
++    if (!avctx->block_align) {
++        av_log(avctx, AV_LOG_FATAL, "The container must set AVCodecContext.block_align!\n");
++        return buf_size;
++    }
++
++    const int remaining_size = avctx->block_align - pc->index;
++
++    const int next = remaining_size <= buf_size ? remaining_size : END_NOT_FOUND;
++
++    if (ff_combine_frame(pc, next, &buf, &buf_size) < 0)
++        return buf_size;
++
++    *poutbuf      = buf;
++    *poutbuf_size = buf_size;
++    return next;
++}
++
++const FFCodecParser ff_pcm_psmf_parser = {
++    .codec_ids      = { AV_CODEC_ID_PCM_S16LE, AV_CODEC_ID_PCM_PAMF },
++    .priv_data_size = sizeof(ParseContext),
++    .parse          = parse,
++    .close          = ff_parse_close,
++};
+diff --git a/libavcodec/utils.c b/libavcodec/utils.c
+index 615d60cd58..759a7d2780 100644
+--- a/libavcodec/utils.c
++++ b/libavcodec/utils.c
+@@ -599,6 +599,7 @@ static int get_audio_frame_duration(enum AVCodecID id, int sr, int ch, int ba,
+         if (framecount > INT_MAX/1024)
+             return 0;
+         return 1024 * framecount;
++    case AV_CODEC_ID_ATRAC3P_ATS:
+     case AV_CODEC_ID_ATRAC3P:      return 2048;
+     case AV_CODEC_ID_MP2:
+     case AV_CODEC_ID_MUSEPACK7:    return 1152;
+diff --git a/libavformat/allformats.c b/libavformat/allformats.c
+index 6ec361fb7b..4636020bdc 100644
+--- a/libavformat/allformats.c
++++ b/libavformat/allformats.c
+@@ -389,6 +389,7 @@ extern const FFInputFormat  ff_pdv_demuxer;
+ extern const FFInputFormat  ff_pjs_demuxer;
+ extern const FFInputFormat  ff_pmp_demuxer;
+ extern const FFInputFormat  ff_pp_bnk_demuxer;
++extern const FFInputFormat  ff_psmf_demuxer;
+ extern const FFOutputFormat ff_psp_muxer;
+ extern const FFInputFormat  ff_pva_demuxer;
+ extern const FFInputFormat  ff_pvf_demuxer;
+diff --git a/libavformat/mpeg.c b/libavformat/mpeg.c
+index a7a2ef78e6..e4a841497d 100644
+--- a/libavformat/mpeg.c
++++ b/libavformat/mpeg.c
+@@ -33,6 +33,7 @@
+ /* demux code */
+ 
+ #define MAX_SYNC_SIZE 100000
++#define PSMF_PACK_SIZE_ALIGN 0x800
+ 
+ static int check_pes(const uint8_t *p, const uint8_t *end)
+ {
+@@ -129,8 +130,18 @@ typedef struct MpegDemuxContext {
+     int dvd;
+     int imkh_cctv;
+     int raw_ac3;
++    int psmf;
+ } MpegDemuxContext;
+ 
++typedef struct PsmfVideoStreamContext {
++    uint8_t keyframe;
++    int keyframs_size;
++} PsmfVideoStreamContext;
++
++typedef struct PsmfAudioStreamContext {
++    uint8_t continuity;
++} PsmfAudioStreamContext;
++
+ static int mpegps_read_header(AVFormatContext *s)
+ {
+     MpegDemuxContext *m = s->priv_data;
+@@ -267,6 +278,61 @@ redo:
+         goto redo;
+     }
+     if (startcode == PRIVATE_STREAM_2) {
++        if (m->psmf) {
++            // private stream 2 is used as random access point information in PSMF streams
++            // Note: PRIVATE_STREAM_2 start codes can appear in PES packet data, do not return AVERROR_INVALIDDATA here
++
++            // uint16_t: stream id
++            // uint16_t * 4: offsets to the next four reference pictures (can be -1 if there are less than four ref pics in this GOP or 0 in unknown cases)
++            // uint8_t * 4: unknown
++            // uint16_t: size of following fields
++            // uint16_t: number of pictures in this GOP
++            // for each picture:
++            // 1st to 8th bits: unknown
++            // 9th bit: reference picture indicator
++            // 10th to 32nd bits: coded picture size (max should be 0x12a800 for M2V, 0xcc000 for AVC)
++
++            unsigned int len = avio_rb16(s->pb);
++            if (len < 22) {
++                av_log(s, AV_LOG_ERROR, "Invalid random access point"
++                                        " info packet length (%d)\n", len);
++                goto error_redo;
++            }
++
++            const unsigned int stream_id = avio_rb16(s->pb);
++            len -= 2;
++
++            if ((stream_id & PACKET_START_CODE_MASK) != PACKET_START_CODE_PREFIX ||
++                (stream_id & 0xf0) != VIDEO_ID) {
++                av_log(s, AV_LOG_ERROR, "Invalid stream id in random access"
++                                        " point info packet (%X)\n", stream_id);
++                goto error_redo;
++            }
++
++            avio_skip(s->pb, 16);
++            const int keyframe_size = avio_rb32(s->pb) & 0x7fffff;
++            len -= 20;
++
++            unsigned int i;
++            for (i = 0; i < s->nb_streams; i++)
++                if (stream_id == (unsigned int)s->streams[i]->id)
++                    break;
++
++            if (i >= s->nb_streams) {
++                av_log(s, AV_LOG_ERROR, "Invalid stream id in random access"
++                                        " point info packet (%X)\n", stream_id);
++                goto error_redo;
++            }
++
++            if (s->streams[i]->discard < AVDISCARD_ALL) {
++                PsmfVideoStreamContext *const ctx = s->streams[i]->priv_data;
++                ctx->keyframe = 1;
++                ctx->keyframs_size = keyframe_size;
++            }
++
++            avio_skip(s->pb, len);
++            goto redo;
++        }
+         if (!m->sofdec) {
+             /* Need to detect whether this from a DVD or a 'Sofdec' stream */
+             int len = avio_rb16(s->pb);
+@@ -448,7 +514,7 @@ redo:
+ 
+         startcode = avio_r8(s->pb);
+         m->raw_ac3 = 0;
+-        if (startcode == 0x0b) {
++        if (startcode == 0x0b && !m->psmf) {
+             if (avio_r8(s->pb) == 0x77) {
+                 startcode = 0x80;
+                 m->raw_ac3 = 1;
+@@ -462,7 +528,7 @@ redo:
+     }
+     if (len < 0)
+         goto error_redo;
+-    if (dts != AV_NOPTS_VALUE && ppos) {
++    if (dts != AV_NOPTS_VALUE && ppos && !m->psmf) {
+         int i;
+         for (i = 0; i < s->nb_streams; i++) {
+             if (startcode == s->streams[i]->id &&
+@@ -527,6 +593,11 @@ redo:
+             goto found;
+     }
+ 
++    if (m->psmf) {
++        av_log(s, AV_LOG_ERROR, "Unknown stream found (%X)\n", startcode);
++        goto skip;
++    }
++
+     es_type = m->psm_es_type[startcode & 0xff];
+     if (es_type == STREAM_TYPE_VIDEO_MPEG1) {
+         codec_id = AV_CODEC_ID_MPEG2VIDEO;
+@@ -656,6 +727,69 @@ found:
+             len -=6;
+       }
+     }
++
++    if (m->psmf) {
++        // Set the position to the start of the Pack so that it matches the
++        // positions in the entry point table of the header
++        dummy_pos &= ~(PSMF_PACK_SIZE_ALIGN - 1);
++
++        switch (st->codecpar->codec_type) {
++        case AVMEDIA_TYPE_VIDEO: {
++            PsmfVideoStreamContext *const ctx = st->priv_data;
++
++            if (ctx->keyframe) {
++                if (dts == AV_NOPTS_VALUE || pts == AV_NOPTS_VALUE) {
++                    av_log(s, AV_LOG_ERROR, "The PES packet after a random"
++                                            " access info packet must contain"
++                                            " the start of a new frame\n");
++                    return AVERROR_INVALIDDATA;
++                }
++
++                ff_reduce_index(s, st->index);
++                av_add_index_entry(st, dummy_pos, pts, ctx->keyframs_size, 0,
++                                   AVINDEX_KEYFRAME);
++                ctx->keyframe = 0;
++            }
++            break;
++        }
++        case AVMEDIA_TYPE_AUDIO: {
++            PsmfAudioStreamContext *const ctx = st->priv_data;
++            const uint16_t next_frame_offset_mask =
++                st->codecpar->codec_id == AV_CODEC_ID_PCM_PAMF ? 0x7ff : 0xffff;
++            const uint16_t next_frame_offset =
++                avio_rb24(s->pb) & next_frame_offset_mask;
++
++            len -= 3;
++
++            if (!ctx->continuity) {
++                if (next_frame_offset == next_frame_offset_mask)
++                    goto skip;
++
++                if (next_frame_offset > len) {
++                    av_log(s, AV_LOG_ERROR, "Invalid next frame offset (%X)\n",
++                           next_frame_offset);
++                    return AVERROR_INVALIDDATA;
++                }
++
++                avio_skip(s->pb, next_frame_offset);
++                len -= next_frame_offset;
++                ctx->continuity = 1;
++            }
++            break;
++        }
++        case AVMEDIA_TYPE_DATA:
++            avpriv_report_missing_feature(s, "User data stream demuxing");
++            avio_skip(s->pb, 1);
++            len--;
++
++            if (pts != AV_NOPTS_VALUE) { // start of new frame
++                avio_rb32(s->pb); // size of this frame in bytes
++                avio_skip(s->pb, 4);
++                len -= 8;
++            }
++        }
++    }
++
+     ret = av_get_packet(s->pb, pkt, len);
+ 
+     pkt->pts          = pts;
+@@ -1072,3 +1206,7 @@ const FFInputFormat ff_vobsub_demuxer = {
+     .read_close     = vobsub_read_close,
+ };
+ #endif
++
++#if CONFIG_PSMF_DEMUXER
++#include "psmf.h"
++#endif
+diff --git a/libavformat/mpeg.h b/libavformat/mpeg.h
+index 20592eb184..b42e7c858f 100644
+--- a/libavformat/mpeg.h
++++ b/libavformat/mpeg.h
+@@ -61,6 +61,10 @@
+ 
+ #define STREAM_TYPE_AUDIO_AC3       0x81
+ 
++#define STREAM_TYPE_PSMF_AUDIO_PCM     0x80
++#define STREAM_TYPE_PSMF_AUDIO_ATRAC3P 0xdc
++#define STREAM_TYPE_PSMF_USER_DATA     0xdd
++
+ static const int lpcm_freq_tab[4] = { 48000, 96000, 44100, 32000 };
+ 
+ /**
+diff --git a/libavformat/psmf.h b/libavformat/psmf.h
+new file mode 100644
+index 0000000000..b174948852
+--- /dev/null
++++ b/libavformat/psmf.h
+@@ -0,0 +1,1024 @@
++/*
++ * PSMF/PAMF demuxer
++ * Copyright (c) 2026 Simon Capriotti
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#ifndef AVFORMAT_PSMF_H
++#define AVFORMAT_PSMF_H
++
++#include "libavcodec/avcodec.h"
++#include "libavutil/avassert.h"
++
++#define PSMF_MAGIC "PSMF"
++#define PSMF_VERSION_12 "0012"
++#define PSMF_VERSION_13 "0013"
++#define PSMF_VERSION_14 "0014"
++#define PSMF_VERSION_15 "0015"
++#define PAMF_MAGIC "PAMF"
++#define PAMF_VERSION_40 "0040"
++#define PAMF_VERSION_41 "0041"
++#define PSMF_PCM_FRAME_SIZE 80
++#define PCM_BLURAY_FRAMES_PER_SEC 200
++
++typedef struct PsmfContext {
++    MpegDemuxContext mpeg;
++    int64_t prev_position;
++} PsmfContext;
++
++static int psmf_probe(const AVProbeData *p)
++{
++    if (memcmp(p->buf, PSMF_MAGIC, strlen(PSMF_MAGIC)) == 0 &&
++        (memcmp(p->buf + 4, PSMF_VERSION_12, strlen(PSMF_VERSION_12)) == 0 ||
++        memcmp(p->buf + 4, PSMF_VERSION_13, strlen(PSMF_VERSION_13)) == 0 ||
++        memcmp(p->buf + 4, PSMF_VERSION_14, strlen(PSMF_VERSION_14)) == 0 ||
++        memcmp(p->buf + 4, PSMF_VERSION_15, strlen(PSMF_VERSION_15)) == 0))
++        return AVPROBE_SCORE_MAX;
++    if (memcmp(p->buf, PAMF_MAGIC, strlen(PAMF_MAGIC)) == 0 &&
++        (memcmp(p->buf + 4, PAMF_VERSION_40, strlen(PAMF_VERSION_40)) == 0 ||
++        memcmp(p->buf + 4, PAMF_VERSION_41, strlen(PAMF_VERSION_41)) == 0))
++        return AVPROBE_SCORE_MAX;
++    return 0;
++}
++
++static int psmf_set_stream_aspect_ratio(uint8_t aspect_ratio_idc,
++                                        uint16_t sar_width,
++                                        uint16_t sar_height, AVStream *s)
++{
++    switch (aspect_ratio_idc) {
++    case 1:
++        s->codecpar->sample_aspect_ratio.num = 1;
++        s->codecpar->sample_aspect_ratio.den = 1;
++        s->sample_aspect_ratio.num = 1;
++        s->sample_aspect_ratio.den = 1;
++        return 0;
++    case 2:
++        s->codecpar->sample_aspect_ratio.num = 12;
++        s->codecpar->sample_aspect_ratio.den = 11;
++        s->sample_aspect_ratio.num = 12;
++        s->sample_aspect_ratio.den = 11;
++        return 0;
++    case 3:
++        s->codecpar->sample_aspect_ratio.num = 10;
++        s->codecpar->sample_aspect_ratio.den = 11;
++        s->sample_aspect_ratio.num = 10;
++        s->sample_aspect_ratio.den = 11;
++        return 0;
++    case 4:
++        s->codecpar->sample_aspect_ratio.num = 16;
++        s->codecpar->sample_aspect_ratio.den = 11;
++        s->sample_aspect_ratio.num = 16;
++        s->sample_aspect_ratio.den = 11;
++        return 0;
++    case 5:
++        s->codecpar->sample_aspect_ratio.num = 40;
++        s->codecpar->sample_aspect_ratio.den = 33;
++        s->sample_aspect_ratio.num = 40;
++        s->sample_aspect_ratio.den = 33;
++        return 0;
++    case 14:
++        s->codecpar->sample_aspect_ratio.num = 4;
++        s->codecpar->sample_aspect_ratio.den = 3;
++        s->sample_aspect_ratio.num = 4;
++        s->sample_aspect_ratio.den = 3;
++        return 0;
++    case 0xff:
++        s->codecpar->sample_aspect_ratio.num = sar_width;
++        s->codecpar->sample_aspect_ratio.den = sar_height;
++        s->sample_aspect_ratio.num = sar_width;
++        s->sample_aspect_ratio.den = sar_height;
++        return 0;
++    default:
++        av_log(s, AV_LOG_FATAL, "Invalid aspect ratio indicator (%d)\n",
++               aspect_ratio_idc);
++        return AVERROR_INVALIDDATA;
++    }
++}
++
++static int psmf_set_stream_frame_rate(uint8_t frame_rate_info, AVStream *s)
++{
++    switch (frame_rate_info) {
++    case 0:
++        s->codecpar->framerate.num = 24000;
++        s->codecpar->framerate.den = 1001;
++        s->avg_frame_rate.num = 24000;
++        s->avg_frame_rate.den = 1001;
++        s->r_frame_rate.num = 24000;
++        s->r_frame_rate.den = 1001;
++        return 0;
++    case 1:
++        s->codecpar->framerate.num = 24;
++        s->codecpar->framerate.den = 1;
++        s->avg_frame_rate.num = 24;
++        s->avg_frame_rate.den = 1;
++        s->r_frame_rate.num = 24;
++        s->r_frame_rate.den = 1;
++        return 0;
++    case 2:
++        s->codecpar->framerate.num = 25;
++        s->codecpar->framerate.den = 1;
++        s->avg_frame_rate.num = 25;
++        s->avg_frame_rate.den = 1;
++        s->r_frame_rate.num = 25;
++        s->r_frame_rate.den = 1;
++        return 0;
++    case 3:
++        s->codecpar->framerate.num = 30000;
++        s->codecpar->framerate.den = 1001;
++        s->avg_frame_rate.num = 30000;
++        s->avg_frame_rate.den = 1001;
++        s->r_frame_rate.num = 30000;
++        s->r_frame_rate.den = 1001;
++        return 0;
++    case 4:
++        s->codecpar->framerate.num = 30;
++        s->codecpar->framerate.den = 1;
++        s->avg_frame_rate.num = 30;
++        s->avg_frame_rate.den = 1;
++        s->r_frame_rate.num = 30;
++        s->r_frame_rate.den = 1;
++        return 0;
++    case 5:
++        s->codecpar->framerate.num = 50;
++        s->codecpar->framerate.den = 1;
++        s->avg_frame_rate.num = 50;
++        s->avg_frame_rate.den = 1;
++        s->r_frame_rate.num = 50;
++        s->r_frame_rate.den = 1;
++        return 0;
++    case 6:
++        s->codecpar->framerate.num = 60000;
++        s->codecpar->framerate.den = 1001;
++        s->avg_frame_rate.num = 60000;
++        s->avg_frame_rate.den = 1001;
++        s->r_frame_rate.num = 60000;
++        s->r_frame_rate.den = 1001;
++        return 0;
++    default:
++        av_log(s, AV_LOG_FATAL, "Invalid frame rate indicator (%d)\n",
++               frame_rate_info);
++        return AVERROR_INVALIDDATA;
++    }
++}
++
++static int pamf_parse_avc_info(AVStream *s, AVIOContext *pb)
++{
++    const uint8_t profile_idc = avio_r8(pb);
++    const uint8_t level_idc = avio_r8(pb);
++    const uint8_t flags_1 = avio_r8(pb);
++    const uint8_t frame_mbs_only_flag = flags_1 >> 7;
++    const uint8_t video_signal_info_flag = flags_1 >> 6 & 1;
++    const uint8_t frame_rate_info = (flags_1 & 0xf) - 1;
++    const uint8_t aspect_ratio_idc = avio_r8(pb);
++    const uint16_t sar_width = avio_rb16(pb);
++    const uint16_t sar_height = avio_rb16(pb);
++    avio_skip(pb, 1); // Unused
++    const uint16_t horizontal_size = avio_r8(pb) * 0x10;
++    avio_skip(pb, 1); // Unused
++    const uint16_t vertical_size = avio_r8(pb) * 0x10;
++    av_unused const uint16_t frame_crop_left_offset = avio_rb16(pb);
++    av_unused const uint16_t frame_crop_right_offset = avio_rb16(pb);
++    av_unused const uint16_t frame_crop_top_offset = avio_rb16(pb);
++    av_unused const uint16_t frame_crop_bottom_offset = avio_rb16(pb);
++    const uint8_t flags_2 = avio_r8(pb);
++    av_unused const uint8_t video_format = flags_2 >> 5;
++    const uint8_t video_full_range_flag = flags_2 >> 4 & 1;
++    const uint8_t color_primaries = avio_r8(pb);
++    const uint8_t transfer_characteristics = avio_r8(pb);
++    const uint8_t matrix_coefficients = avio_r8(pb);
++    const uint8_t flags_3 = avio_r8(pb);
++    av_unused const  uint8_t entropy_coding_mode_flag = flags_3 >> 7;
++    av_unused const uint8_t deblocking_filter_flag = flags_3 >> 6 & 1;
++    av_unused const uint8_t min_num_slice_per_picture_idx = flags_3 >> 4 & 3;
++    av_unused const uint8_t nfw_idc = flags_3 & 3;
++    av_unused const uint8_t max_mean_bitrate = avio_r8(pb);
++    avio_skip(pb, 6); // Unused
++
++    s->codecpar->profile = profile_idc;
++    s->codecpar->level = level_idc;
++
++    if (frame_mbs_only_flag)
++        s->codecpar->field_order = AV_FIELD_PROGRESSIVE;
++
++    if (video_signal_info_flag) {
++        s->codecpar->color_range = video_full_range_flag + 1;
++        s->codecpar->color_primaries = color_primaries;
++        s->codecpar->color_trc = transfer_characteristics;
++        s->codecpar->color_space = matrix_coefficients;
++    }
++
++    s->codecpar->format = AV_PIX_FMT_YUV420P;
++
++    int ret = psmf_set_stream_aspect_ratio(aspect_ratio_idc, sar_width,
++                                           sar_height, s);
++    if (ret != 0)
++        return ret;
++
++    s->codecpar->width = horizontal_size;
++    s->codecpar->height = vertical_size;
++
++    return psmf_set_stream_frame_rate(frame_rate_info, s);
++}
++
++static int pamf_parse_m2v_info(AVStream *s, AVIOContext *pb)
++{
++    const uint8_t profile_and_level_idc = avio_r8(pb);
++    const uint8_t profile_idc = profile_and_level_idc >> 4 & 3;
++    const uint8_t level_idc = profile_and_level_idc & 7;
++    avio_skip(pb, 1); // Unused
++    const uint8_t flags_1 = avio_r8(pb);
++    const uint8_t progressive_sequence = flags_1 >> 7;
++    const uint8_t video_signal_info_flag = flags_1 >> 6 & 1;
++    const uint8_t frame_rate_info = flags_1 & 0xf;
++    const uint8_t aspect_ratio_idc = avio_r8(pb);
++    const uint16_t sar_width = avio_rb16(pb);
++    const uint16_t sar_height = avio_rb16(pb);
++    avio_skip(pb, 1); // Unused
++    av_unused const uint16_t horizontal_size = avio_r8(pb) * 0x10;
++    avio_skip(pb, 1); // Unused
++    av_unused const uint16_t vertical_size = avio_r8(pb) * 0x10;
++    const uint16_t horizontal_size_value = avio_rb16(pb);
++    const uint16_t vertical_size_value = avio_rb16(pb);
++    avio_skip(pb, 4); // Unused
++    const uint8_t flags_2 = avio_r8(pb);
++    av_unused const uint8_t video_format = flags_2 >> 5;
++    const uint8_t video_full_range_flag = flags_2 >> 4 & 1;
++    const uint8_t color_primaries = avio_r8(pb);
++    const uint8_t transfer_characteristics = avio_r8(pb);
++    const uint8_t matrix_coefficients = avio_r8(pb);
++    avio_skip(pb, 8); // Unused
++
++    if (profile_and_level_idc != 0xff) {
++        if (profile_idc != 0) {
++            av_log(s, AV_LOG_FATAL, "Invalid profile indicator (%d)\n",
++                   profile_idc);
++            return AVERROR_INVALIDDATA;
++        }
++
++        s->codecpar->profile = AV_PROFILE_MPEG2_MAIN;
++        s->codecpar->level = level_idc;
++    }
++
++    if (progressive_sequence)
++        s->codecpar->field_order = AV_FIELD_PROGRESSIVE;
++
++    if (video_signal_info_flag) {
++        s->codecpar->color_range = video_full_range_flag + 1;
++        s->codecpar->color_primaries = color_primaries;
++        s->codecpar->color_trc = transfer_characteristics;
++        s->codecpar->color_space = matrix_coefficients;
++    }
++
++    s->codecpar->format = AV_PIX_FMT_YUV420P;
++
++    int ret = psmf_set_stream_aspect_ratio(aspect_ratio_idc, sar_width,
++                                           sar_height, s);
++    if (ret != 0)
++        return ret;
++
++    s->codecpar->width = horizontal_size_value;
++    s->codecpar->height = vertical_size_value;
++
++    return psmf_set_stream_frame_rate(frame_rate_info - 1, s);
++}
++
++static int psmf_parse_audio_info(AVStream *s, AVIOContext *pb)
++{
++    avio_skip(pb, 2); // Unused
++    const uint8_t nb_channels = avio_r8(pb);
++    const uint8_t sample_rate_idx = avio_r8(pb) & 0xf;
++
++    int ch_layout_mask;
++    switch (nb_channels) {
++    case 1:
++        ch_layout_mask = AV_CH_LAYOUT_MONO;
++        break;
++    case 2:
++        ch_layout_mask = AV_CH_LAYOUT_STEREO;
++        break;
++    default:
++        av_log(s, AV_LOG_FATAL, "Invalid number of channels (%d)\n",
++               nb_channels);
++        return AVERROR_INVALIDDATA;
++    }
++
++    av_channel_layout_from_mask(&s->codecpar->ch_layout, ch_layout_mask);
++
++    if (sample_rate_idx != 2) {
++        av_log(s, AV_LOG_FATAL, "Invalid sample rate indicator (%d)\n",
++               sample_rate_idx);
++        return AVERROR_INVALIDDATA;
++    }
++
++    s->codecpar->sample_rate = 44100;
++
++    if (s->codecpar->codec_id == AV_CODEC_ID_PCM_S16LE)
++        s->codecpar->block_align = PSMF_PCM_FRAME_SIZE * nb_channels *
++                                   sizeof(int16_t);
++
++    return 0;
++}
++
++static int pamf_parse_audio_info(AVStream *s, AVIOContext *pb)
++{
++    avio_skip(pb, 2); // Unused
++    const uint8_t nb_channels = avio_r8(pb) & 0xf;
++    const uint8_t sample_rate_idx = avio_r8(pb) & 0xf;
++    const uint8_t bits_per_sample_idx = avio_r8(pb) >> 6;
++    avio_skip(pb, 27); // Unused
++
++    int ch_layout_mask;
++    switch (nb_channels) {
++    case 1:
++        ch_layout_mask = AV_CH_LAYOUT_MONO;
++        break;
++    case 2:
++        ch_layout_mask = AV_CH_LAYOUT_STEREO;
++        break;
++    case 6:
++        ch_layout_mask = AV_CH_LAYOUT_5POINT1;
++        break;
++    case 8:
++        ch_layout_mask = AV_CH_LAYOUT_7POINT1;
++        break;
++    default:
++        av_log(s, AV_LOG_FATAL, "Invalid number of channels (%d)\n",
++               nb_channels);
++        return AVERROR_INVALIDDATA;
++    }
++
++    av_channel_layout_from_mask(&s->codecpar->ch_layout, ch_layout_mask);
++
++    if (sample_rate_idx != 1) {
++        av_log(s, AV_LOG_FATAL, "Invalid sample rate indicator (%d)\n",
++               sample_rate_idx);
++        return AVERROR_INVALIDDATA;
++    }
++
++    s->codecpar->sample_rate = 48000;
++
++    if (s->codecpar->codec_id == AV_CODEC_ID_PCM_PAMF) {
++        switch (bits_per_sample_idx) {
++        case 1:
++            s->codecpar->bits_per_coded_sample =
++            s->codecpar->bits_per_raw_sample = 16;
++            s->codecpar->format = AV_SAMPLE_FMT_S16;
++            break;
++        case 3:
++            s->codecpar->bits_per_coded_sample =
++            s->codecpar->bits_per_raw_sample = 24;
++            s->codecpar->format = AV_SAMPLE_FMT_S32;
++            break;
++        default:
++            av_log(s, AV_LOG_FATAL, "Invalid bits per sample indicator (%d)\n",
++                   bits_per_sample_idx);
++            return AVERROR_INVALIDDATA;
++        }
++
++        s->codecpar->bit_rate = FFALIGN(s->codecpar->ch_layout.nb_channels, 2) *
++                                s->codecpar->sample_rate *
++                                s->codecpar->bits_per_coded_sample;
++        s->codecpar->frame_size = s->codecpar->sample_rate /
++                                  PCM_BLURAY_FRAMES_PER_SEC;
++        s->codecpar->block_align = s->codecpar->bit_rate / CHAR_BIT /
++                                   PCM_BLURAY_FRAMES_PER_SEC;
++    } else {
++        s->codecpar->format = AV_SAMPLE_FMT_FLT;
++    }
++
++    return 0;
++}
++
++static int psmf_parse_entry_point_table(AVFormatContext *s, AVStream *st,
++                                        uint32_t entry_point_table_offset,
++                                        uint32_t nb_entry_points,
++                                        uint64_t header_size,
++                                        uint64_t stream_size,
++                                        unsigned int *ep_tables_start_pos,
++                                        unsigned int *ep_tables_end_pos,
++                                        int is_pamf)
++{
++    av_assert0(ep_tables_start_pos && ep_tables_end_pos);
++
++    const uint32_t ep_size = is_pamf ? 12 : 10;
++
++    if (nb_entry_points == 0 && entry_point_table_offset != 0 ||
++        nb_entry_points != 0 && entry_point_table_offset == 0 ||
++        entry_point_table_offset +
++        nb_entry_points * ep_size > header_size) {
++        av_log(s, AV_LOG_FATAL, "Invalid entry point table offset (%X)"
++               " or number of entry points (%d)\n",
++               entry_point_table_offset, nb_entry_points);
++        return AVERROR_INVALIDDATA;
++    }
++
++    if (entry_point_table_offset == 0)
++        return 0;
++
++    if (*ep_tables_start_pos == 0) {
++        *ep_tables_end_pos = *ep_tables_start_pos = entry_point_table_offset;
++    } else if (*ep_tables_end_pos != entry_point_table_offset) {
++        av_log(s, AV_LOG_FATAL, "Invalid entry point table offset (%X)\n",
++               entry_point_table_offset);
++        return AVERROR_INVALIDDATA;
++    }
++
++    *ep_tables_end_pos += nb_entry_points * ep_size;
++
++    const int64_t pos = avio_tell(s->pb);
++    ffio_ensure_seekback(s->pb, *ep_tables_end_pos - pos);
++    avio_seek(s->pb, entry_point_table_offset, SEEK_SET);
++
++    uint64_t prev_offset = 0;
++    for (unsigned int i = 0; i < nb_entry_points; i++) {
++        int64_t pts;
++        if (is_pamf) {
++            avio_skip(s->pb, 2); // 2 bits: indexN, 1 bit: unused, 13 bits: nThRefPictureOffset
++            pts = (int64_t)avio_rb16(s->pb) << 32 | avio_rb32(s->pb);
++        } else {
++            // 2 bits: indexN, 2 bit: unused, 11 bits: nThRefPictureOffset
++            pts = ((int64_t)avio_rb16(s->pb) & 1) << 32 | avio_rb32(s->pb);
++        }
++
++        if (pts > UINT32_MAX) {
++            av_log(s, AV_LOG_FATAL, "Invalid entry point pts (%ld)\n", pts);
++            return AVERROR_INVALIDDATA;
++        }
++
++        const uint64_t offset = (uint64_t)avio_rb32(s->pb) *
++                                PSMF_PACK_SIZE_ALIGN;
++        if (offset > stream_size || offset < prev_offset) {
++            av_log(s, AV_LOG_FATAL, "Invalid entry point offset (%ld)\n",
++                   offset);
++            return AVERROR_INVALIDDATA;
++        }
++
++        ff_reduce_index(s, st->index);
++        av_add_index_entry(st, offset + header_size, pts, 0,
++                           offset - prev_offset, AVINDEX_KEYFRAME);
++        prev_offset = offset;
++    }
++
++    avio_seek(s->pb, pos, SEEK_SET);
++    return 0;
++}
++
++static int psmf_parse_stream_info(AVFormatContext *s, uint64_t header_size,
++                                  uint64_t stream_size,
++                                  unsigned int *ep_tables_start_pos,
++                                  unsigned int *ep_tables_end_pos)
++{
++    MpegDemuxContext *m = s->priv_data;
++
++    const uint8_t stream_id = avio_r8(s->pb);
++    const uint8_t private_stream_id = avio_r8(s->pb);
++
++    uint8_t type;
++    if ((stream_id & 0xf0) == VIDEO_ID) {
++        if (m->psm_es_type[stream_id] != 0) {
++            av_log(s, AV_LOG_FATAL, "Stream id %X already in use\n", stream_id);
++            return AVERROR_INVALIDDATA;
++        }
++
++        m->psm_es_type[stream_id] =
++        type = STREAM_TYPE_VIDEO_H264;
++    } else if (stream_id == (PRIVATE_STREAM_1 & 0xff)) {
++        if (m->psm_es_type[private_stream_id] != 0) {
++            av_log(s, AV_LOG_FATAL, "Private stream id %X already in use\n",
++                   private_stream_id);
++            return AVERROR_INVALIDDATA;
++        }
++
++        switch (private_stream_id & 0xf0) {
++        case 0x00:
++            m->psm_es_type[private_stream_id] =
++            type = STREAM_TYPE_PSMF_AUDIO_ATRAC3P;
++            break;
++        case 0x10:
++            m->psm_es_type[private_stream_id] =
++            type = STREAM_TYPE_PSMF_AUDIO_PCM;
++            break;
++        case 0x20:
++            m->psm_es_type[private_stream_id] =
++            type = STREAM_TYPE_PSMF_USER_DATA;
++            break;
++        default:
++            av_log(s, AV_LOG_FATAL, "Invalid private stream id (%X)\n",
++                   stream_id);
++            return AVERROR_INVALIDDATA;
++        }
++    } else {
++        av_log(s, AV_LOG_FATAL, "Invalid stream id (%X)\n", stream_id);
++        return AVERROR_INVALIDDATA;
++    }
++
++    AVStream *const st = avformat_new_stream(s, NULL);
++    if (!st)
++        return AVERROR(ENOMEM);
++
++    st->time_base = (AVRational){ 1, 90000 };
++    avpriv_stream_set_need_parsing(st, AVSTREAM_PARSE_FULL);
++
++    avio_skip(s->pb, 2); // 2 bits: unused, 1 bit: P_STD_buffer_scale, 13 bits: P_STD_buffer_size
++
++    const uint32_t entry_point_table_offset = avio_rb32(s->pb);
++    const uint32_t nb_entry_points = avio_rb32(s->pb);
++    int ret = psmf_parse_entry_point_table(s, st, entry_point_table_offset,
++                                           nb_entry_points, header_size,
++                                           stream_size, ep_tables_start_pos,
++                                           ep_tables_end_pos, 0);
++    if (ret < 0)
++        return ret;
++
++    ret = 0;
++    switch (type) {
++    case STREAM_TYPE_VIDEO_H264:
++        st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
++        st->codecpar->codec_id = AV_CODEC_ID_H264;
++        st->id = 1 << 8 | stream_id;
++
++        st->codecpar->profile = AV_PROFILE_H264_MAIN;
++        st->codecpar->level = 21;
++        st->codecpar->field_order = AV_FIELD_PROGRESSIVE;
++        st->codecpar->format = AV_PIX_FMT_YUV420P;
++        st->codecpar->sample_aspect_ratio.num = 1;
++        st->codecpar->sample_aspect_ratio.den = 1;
++        st->sample_aspect_ratio.num = 1;
++        st->sample_aspect_ratio.den = 1;
++        st->codecpar->framerate.num = 30000;
++        st->codecpar->framerate.den = 1001;
++        st->avg_frame_rate.num = 30000;
++        st->avg_frame_rate.den = 1001;
++        st->r_frame_rate.num = 30000;
++        st->r_frame_rate.den = 1001;
++
++        st->codecpar->width = avio_r8(s->pb) * 16;
++        st->codecpar->height = avio_r8(s->pb) * 16;
++
++        avio_skip(s->pb, 2); // Unused
++        break;
++    case STREAM_TYPE_PSMF_AUDIO_PCM:
++        st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
++        st->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
++        st->id = private_stream_id;
++        st->codecpar->format = AV_SAMPLE_FMT_S16;
++        st->codecpar->frame_size = PSMF_PCM_FRAME_SIZE;
++        ret = psmf_parse_audio_info(st, s->pb);
++        break;
++    case STREAM_TYPE_PSMF_AUDIO_ATRAC3P:
++        st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
++        st->codecpar->codec_id = AV_CODEC_ID_ATRAC3P_ATS;
++        st->id = private_stream_id;
++        st->codecpar->format = AV_SAMPLE_FMT_FLT;
++        ret = psmf_parse_audio_info(st, s->pb);
++        break;
++    case STREAM_TYPE_PSMF_USER_DATA:
++        st->codecpar->codec_type = AVMEDIA_TYPE_DATA;
++        st->codecpar->codec_id = AV_CODEC_ID_BIN_DATA;
++        st->id = private_stream_id;
++        avio_skip(s->pb, 4); // Unused
++        break;
++    default:
++        av_unreachable("The stream type wasn't set properly");
++    }
++
++    return ret;
++}
++
++static int pamf_parse_stream_info(AVFormatContext *s, uint64_t header_size,
++                                  uint64_t stream_size,
++                                  unsigned int *ep_tables_start_pos,
++                                  unsigned int *ep_tables_end_pos)
++{
++    MpegDemuxContext *m = s->priv_data;
++
++    const uint8_t type = avio_r8(s->pb);
++    avio_skip(s->pb, 3); // Unused
++    const uint8_t stream_id = avio_r8(s->pb);
++    const uint8_t private_stream_id = avio_r8(s->pb);
++
++    switch (type) {
++    case STREAM_TYPE_VIDEO_MPEG2:
++    case STREAM_TYPE_VIDEO_H264:
++        if ((stream_id & 0xf0) != VIDEO_ID) {
++            av_log(s, AV_LOG_FATAL, "Invalid stream id (%X)\n", stream_id);
++            return AVERROR_INVALIDDATA;
++        }
++        if (m->psm_es_type[stream_id] != 0) {
++            av_log(s, AV_LOG_FATAL, "Stream id %X already in use\n", stream_id);
++            return AVERROR_INVALIDDATA;
++        }
++
++        m->psm_es_type[stream_id] = type;
++        break;
++
++    case STREAM_TYPE_PSMF_AUDIO_PCM:
++    case STREAM_TYPE_AUDIO_AC3:
++    case STREAM_TYPE_PSMF_AUDIO_ATRAC3P:
++    case STREAM_TYPE_PSMF_USER_DATA:
++        if (stream_id != (PRIVATE_STREAM_1 & 0xff)) {
++            av_log(s, AV_LOG_FATAL, "Invalid stream id (%X)\n", stream_id);
++            return AVERROR_INVALIDDATA;
++        }
++        if (private_stream_id >> 4 == 1 ||
++            private_stream_id >> 4 > 4) {
++            av_log(s, AV_LOG_FATAL, "Invalid private stream id (%X)\n",
++                   stream_id);
++            return AVERROR_INVALIDDATA;
++        }
++        if (m->psm_es_type[private_stream_id] != 0) {
++            av_log(s, AV_LOG_FATAL, "Private stream id %X already in use\n",
++                   private_stream_id);
++            return AVERROR_INVALIDDATA;
++        }
++
++        m->psm_es_type[private_stream_id] = type;
++        break;
++
++    default:
++        av_log(s, AV_LOG_FATAL, "Invalid stream type (%X)\n", type);
++        return AVERROR_INVALIDDATA;
++    }
++
++    AVStream *const st = avformat_new_stream(s, NULL);
++    if (!st)
++        return AVERROR(ENOMEM);
++
++    st->time_base = (AVRational){ 1, 90000 };
++    avpriv_stream_set_need_parsing(st, AVSTREAM_PARSE_FULL);
++
++    avio_skip(s->pb, 2); // 2 bits: unused, 1 bit: P_STD_buffer_scale, 13 bits: P_STD_buffer_size
++
++    const uint32_t entry_point_table_offset = avio_rb32(s->pb);
++    const uint32_t nb_entry_points = avio_rb32(s->pb);
++    int ret = psmf_parse_entry_point_table(s, st, entry_point_table_offset,
++                                           nb_entry_points, header_size,
++                                           stream_size, ep_tables_start_pos,
++                                           ep_tables_end_pos, 1);
++    if (ret < 0)
++        return ret;
++
++    ret = 0;
++    switch (type) {
++    case STREAM_TYPE_VIDEO_MPEG2:
++        st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
++        st->codecpar->codec_id = AV_CODEC_ID_MPEG2VIDEO;
++        st->id = 1 << 8 | stream_id;
++        ret = pamf_parse_m2v_info(st, s->pb);
++        break;
++    case STREAM_TYPE_VIDEO_H264:
++        st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
++        st->codecpar->codec_id = AV_CODEC_ID_H264;
++        st->id = 1 << 8 | stream_id;
++        ret = pamf_parse_avc_info(st, s->pb);
++        break;
++    case STREAM_TYPE_PSMF_AUDIO_PCM:
++        st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
++        st->codecpar->codec_id = AV_CODEC_ID_PCM_PAMF;
++        st->id = private_stream_id;
++        ret = pamf_parse_audio_info(st, s->pb);
++        break;
++    case STREAM_TYPE_AUDIO_AC3:
++        st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
++        st->codecpar->codec_id = AV_CODEC_ID_AC3;
++        st->id = private_stream_id;
++        ret = pamf_parse_audio_info(st, s->pb);
++        break;
++    case STREAM_TYPE_PSMF_AUDIO_ATRAC3P:
++        st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
++        st->codecpar->codec_id = AV_CODEC_ID_ATRAC3P_ATS;
++        st->id = private_stream_id;
++        ret = pamf_parse_audio_info(st, s->pb);
++        break;
++    case STREAM_TYPE_PSMF_USER_DATA:
++        st->codecpar->codec_type = AVMEDIA_TYPE_DATA;
++        st->codecpar->codec_id = AV_CODEC_ID_BIN_DATA;
++        st->id = private_stream_id;
++        avio_skip(s->pb, 32); // Unused
++        break;
++    default:
++        av_unreachable("The stream type should have been checked above");
++    }
++
++    return ret;
++}
++
++static int psmf_read_header(AVFormatContext *const s)
++{
++    PsmfContext *const ctx = s->priv_data;
++    int is_pamf = 0;
++
++    ctx->mpeg.psmf = 1;
++    s->packet_size = PSMF_PACK_SIZE_ALIGN;
++
++    uint8_t magic[4] = { 0 };
++    avio_read(s->pb, magic, sizeof(magic));
++
++    if (memcmp(magic, PAMF_MAGIC, strlen(PAMF_MAGIC)) == 0) {
++        is_pamf = 1;
++    } else if (memcmp(magic, PSMF_MAGIC, strlen(PSMF_MAGIC)) != 0) {
++        av_log(s, AV_LOG_FATAL, "Invalid magic string (%c%c%c%c)\n",
++               magic[0], magic[1], magic[2], magic[3]);
++        return AVERROR_INVALIDDATA;
++    }
++
++    uint8_t version[4] = { 0 };
++    avio_read(s->pb, version, sizeof(version));
++
++    if (is_pamf &&
++        memcmp(version, PAMF_VERSION_40, strlen(PAMF_VERSION_40)) != 0 &&
++        memcmp(version, PAMF_VERSION_41, strlen(PAMF_VERSION_41)) != 0 ||
++        !is_pamf &&
++        memcmp(version, PSMF_VERSION_12, strlen(PSMF_VERSION_12)) != 0 &&
++        memcmp(version, PSMF_VERSION_13, strlen(PSMF_VERSION_13)) != 0 &&
++        memcmp(version, PSMF_VERSION_14, strlen(PSMF_VERSION_14)) != 0 &&
++        memcmp(version, PSMF_VERSION_15, strlen(PSMF_VERSION_15)) != 0) {
++        av_log(s, AV_LOG_FATAL, "Invalid version (%c%c%c%c)\n",
++               version[0], version[1], version[2], version[3]);
++        return AVERROR_INVALIDDATA;
++
++    }
++
++    const uint64_t header_size = (int64_t)avio_rb32(s->pb) *
++                                 (is_pamf ? PSMF_PACK_SIZE_ALIGN : 1);
++    if (header_size == 0) {
++        av_log(s, AV_LOG_FATAL, "Invalid header size (%ld)\n", header_size);
++        return AVERROR_INVALIDDATA;
++    }
++
++    const uint64_t stream_size = (int64_t)avio_rb32(s->pb) *
++                                 (is_pamf ? PSMF_PACK_SIZE_ALIGN : 1);
++    if (stream_size == 0) {
++        av_log(s, AV_LOG_FATAL, "Invalid stream size (%ld)\n", stream_size);
++        return AVERROR_INVALIDDATA;
++    }
++
++    const int64_t file_size = avio_size(s->pb);
++    if (file_size != AVERROR(ENOSYS)) {
++        if (file_size < 0)
++            return file_size;
++        if (header_size + stream_size > (uint64_t)file_size) {
++            av_log(s, AV_LOG_FATAL, "Invalid header size (%ld) plus stream"
++                                    " size (%ld) exceeds file size (%ld)\n",
++                   header_size, stream_size, file_size);
++            return AVERROR_INVALIDDATA;
++        }
++    }
++
++    const uint32_t psmf_marks_offset = avio_rb32(s->pb);
++    const uint32_t psmf_marks_size = avio_rb32(s->pb);
++    const uint32_t unk_offset = avio_rb32(s->pb);
++    const uint32_t unk_size = avio_rb32(s->pb);
++    if (psmf_marks_offset == 0 && psmf_marks_size != 0 ||
++        psmf_marks_offset != 0 && psmf_marks_size == 0 ||
++        psmf_marks_offset + psmf_marks_size > header_size) {
++        av_log(s, AV_LOG_FATAL, "Invalid PSMF marks table offset (%X)"
++                                " or size (%d)\n",
++               psmf_marks_offset, psmf_marks_size);
++        return AVERROR_INVALIDDATA;
++    }
++
++    if (unk_offset != 0 || unk_size != 0)
++        return AVERROR_INVALIDDATA;
++
++    avio_skip(s->pb, 0x30); // Unused
++
++    const uint64_t seq_info_offset = avio_tell(s->pb);
++    const uint32_t seq_info_size = avio_rb32(s->pb);
++    if (seq_info_offset + sizeof(uint32_t) + seq_info_size > header_size) {
++        av_log(s, AV_LOG_FATAL, "Invalid sequence info size (%d)\n",
++               seq_info_size);
++        return AVERROR_INVALIDDATA;
++    }
++
++    if (is_pamf)
++        avio_skip(s->pb, 2); // Unused
++
++    const int64_t start_pts = (int64_t)avio_rb16(s->pb) << 32 |
++                              avio_rb32(s->pb);
++    const int64_t end_pts = (int64_t)avio_rb16(s->pb) << 32 |
++                            avio_rb32(s->pb);
++    if (end_pts >= UINT32_MAX || start_pts >= end_pts) {
++        av_log(s, AV_LOG_FATAL, "Invalid start pts (%ld) or end pts (%ld)\n",
++               start_pts, end_pts);
++        return AVERROR_INVALIDDATA;
++    }
++
++    s->duration = (end_pts - start_pts) * AV_TIME_BASE / 90000;
++
++    av_unused const uint32_t mux_rate_bound = avio_rb32(s->pb);
++    av_unused const uint32_t std_delay = avio_rb32(s->pb);
++
++    const uint32_t nb_streams = is_pamf ? avio_rb32(s->pb) : avio_r8(s->pb);
++
++    if (is_pamf)
++        avio_skip(s->pb, 1); // Unused
++
++    const uint8_t nb_grp_periods = avio_r8(s->pb);
++    if (nb_grp_periods != 1) {
++        av_log(s, AV_LOG_FATAL, "Invalid number of grouping periods (%d)\n",
++               nb_grp_periods);
++        return AVERROR_INVALIDDATA;
++    }
++
++    const uint64_t grp_period_offset = avio_tell(s->pb);
++    const uint32_t grp_period_size = avio_rb32(s->pb);
++    if (grp_period_offset + sizeof(uint32_t) + grp_period_size > header_size) {
++        av_log(s, AV_LOG_FATAL, "Invalid grouping period size (%d)\n",
++               grp_period_size);
++        return AVERROR_INVALIDDATA;
++    }
++
++    const int64_t grp_period_start_pts = (int64_t)avio_rb16(s->pb) << 32 |
++                                         avio_rb32(s->pb);
++    const int64_t grp_period_end_pts = (int64_t)avio_rb16(s->pb) << 32 |
++                                       avio_rb32(s->pb);
++    if (grp_period_end_pts >= UINT32_MAX ||
++        grp_period_start_pts >= grp_period_end_pts ||
++        grp_period_start_pts != start_pts) {
++        av_log(s, AV_LOG_FATAL, "Invalid grouping period start pts (%ld)"
++                                " or end pts (%ld)\n",
++               grp_period_start_pts, grp_period_end_pts);
++        return AVERROR_INVALIDDATA;
++    }
++
++    avio_skip(s->pb, 1); // Unused
++
++    const uint8_t nb_grps = avio_r8(s->pb);
++    if (nb_grps != 1) {
++        av_log(s, AV_LOG_FATAL, "Invalid number of groups (%d)\n", nb_grps);
++        return AVERROR_INVALIDDATA;
++    }
++
++    const uint64_t grp_offset = avio_tell(s->pb);
++    const uint32_t grp_size = avio_rb32(s->pb);
++    if (grp_offset + sizeof(uint32_t) + grp_size > header_size) {
++        av_log(s, AV_LOG_FATAL, "Invalid group size (%d)\n", grp_size);
++        return AVERROR_INVALIDDATA;
++    }
++
++    avio_skip(s->pb, 1); // Unused
++
++    const uint8_t grp_nb_streams = avio_r8(s->pb);
++    if (grp_nb_streams == 0 || grp_nb_streams != nb_streams) {
++        av_log(s, AV_LOG_FATAL, "Invalid number of streams in the group (%d)\n",
++               grp_nb_streams);
++        return AVERROR_INVALIDDATA;
++    }
++
++    unsigned int ep_tables_start_pos = 0;
++    unsigned int ep_tables_end_pos = 0;
++    for (int i = 0; i < grp_nb_streams; i++) {
++        const int ret = is_pamf
++            ? pamf_parse_stream_info(s, header_size, stream_size,
++                                     &ep_tables_start_pos, &ep_tables_end_pos)
++            : psmf_parse_stream_info(s, header_size, stream_size,
++                                     &ep_tables_start_pos, &ep_tables_end_pos);
++        if (ret < 0)
++            return ret;
++
++        AVStream *const st = s->streams[i];
++        switch (st->codecpar->codec_type) {
++        case AVMEDIA_TYPE_VIDEO:
++            st->priv_data = av_mallocz(sizeof(PsmfVideoStreamContext));
++            if (!st->priv_data)
++                return AVERROR(ENOMEM);
++            break;
++        case AVMEDIA_TYPE_AUDIO:
++            st->priv_data = av_mallocz(sizeof(PsmfAudioStreamContext));
++            if (!st->priv_data)
++                return AVERROR(ENOMEM);
++        }
++    }
++
++    if (ep_tables_start_pos != 0) {
++        if (avio_tell(s->pb) != ep_tables_start_pos) {
++            av_log(s, AV_LOG_FATAL, "Entry point table isn't located"
++                                    " immediately after stream info\n");
++            return AVERROR_INVALIDDATA;
++        }
++
++        avio_seek(s->pb, ep_tables_end_pos, SEEK_SET);
++    }
++
++    if (psmf_marks_offset) {
++        if (psmf_marks_offset != avio_tell(s->pb)) {
++            av_log(s, AV_LOG_FATAL, "Invalid PSMF marks offset (%X)\n",
++                   psmf_marks_offset);
++            return AVERROR_INVALIDDATA;
++        }
++
++        const uint32_t psmf_marks_size2 = avio_rb32(s->pb);
++        if (psmf_marks_size2 + sizeof(uint32_t) != psmf_marks_size) {
++            av_log(s, AV_LOG_FATAL, "Invalid PSMF marks size (%d)\n",
++                   psmf_marks_size2);
++            return AVERROR_INVALIDDATA;
++        }
++
++        const uint16_t nb_psmf_marks = avio_rb16(s->pb);
++        if (nb_psmf_marks * 0x28 + sizeof(uint16_t) != psmf_marks_size2) {
++            av_log(s, AV_LOG_FATAL, "Invalid number of PSMF marks (%d)\n",
++                   nb_psmf_marks);
++            return AVERROR_INVALIDDATA;
++        }
++
++        for (int i = 0; i < nb_psmf_marks; i++) {
++            const AVRational time_base = { 1, 90000 };
++            const uint8_t type = avio_r8(s->pb);
++            const uint8_t name_length = avio_r8(s->pb);
++            if (name_length > 24) {
++                av_log(s, AV_LOG_FATAL, "Inavlid PSMF mark name length (%d)",
++                       name_length);
++                return AVERROR_INVALIDDATA;
++            }
++
++            const uint64_t pts = avio_rb64(s->pb);
++            if (pts >= UINT32_MAX || pts < (uint64_t)start_pts ||
++                pts > (uint64_t)end_pts) {
++                av_log(s, AV_LOG_FATAL, "Invalid PSMF mark pts (%ld)", pts);
++                return AVERROR_INVALIDDATA;
++            }
++
++            av_unused const uint8_t stream_id = avio_r8(s->pb);
++            av_unused const uint8_t private_stream_id = avio_r8(s->pb);
++            uint8_t mark_data[4];
++            avio_read(s->pb, mark_data, 4);
++
++            char name[25];
++            avio_read(s->pb, name, 24);
++            name[24] = '\0';
++
++            if (type == 5)
++                if (!avpriv_new_chapter(s, i, time_base, pts, AV_NOPTS_VALUE,
++                                        name))
++                    return AVERROR_INVALIDDATA;
++        }
++    }
++
++    avio_seek(s->pb, header_size, SEEK_SET);
++    ctx->prev_position = avio_tell(s->pb);
++
++    return 0;
++}
++
++static int psmf_read_packet(AVFormatContext *s, AVPacket *pkt)
++{
++    PsmfContext *const ctx = s->priv_data;
++
++    const int discontinuity = avio_tell(s->pb) != ctx->prev_position ||
++                              s->io_repositioned;
++
++    for (unsigned int i = 0; i < s->nb_streams; i++) {
++        AVStream *const st = s->streams[i];
++        AVCodecParserContext **const parser = &ffstream(st)->parser;
++
++        if (st->discard >= AVDISCARD_ALL || discontinuity) {
++            switch (st->codecpar->codec_type) {
++            case AVMEDIA_TYPE_VIDEO:
++                ((PsmfVideoStreamContext *)st->priv_data)->keyframe = 0;
++                break;
++            case AVMEDIA_TYPE_AUDIO:
++                ((PsmfAudioStreamContext *)st->priv_data)->continuity = 0;
++            }
++
++            if (*parser) {
++                av_parser_close(*parser);
++                *parser = NULL;
++            }
++        }
++    }
++
++    const int ret = mpegps_read_packet(s, pkt);
++
++    ctx->prev_position = avio_tell(s->pb);
++
++    return ret;
++}
++
++const FFInputFormat ff_psmf_demuxer = {
++    .p.name         = "psmf",
++    .p.long_name    = NULL_IF_CONFIG_SMALL("PSP/PlayStation Advanced Movie Format"),
++    .priv_data_size = sizeof(PsmfContext),
++    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
++    .read_probe     = psmf_probe,
++    .read_header    = psmf_read_header,
++    .read_packet    = psmf_read_packet,
++    .read_timestamp = mpegps_read_dts
++};
++
++#endif /* AVFORMAT_PSMF_H */
+diff --git a/libavformat/riff.c b/libavformat/riff.c
+index fc79d0ac21..f655cea131 100644
+--- a/libavformat/riff.c
++++ b/libavformat/riff.c
+@@ -664,6 +664,7 @@ const struct AVCodecTag *avformat_get_riff_audio_tags(void)
+ const AVCodecGuid ff_codec_wav_guids[] = {
+     { AV_CODEC_ID_AC3,      { 0x2C, 0x80, 0x6D, 0xE0, 0x46, 0xDB, 0xCF, 0x11, 0xB4, 0xD1, 0x00, 0x80, 0x5F, 0x6C, 0xBB, 0xEA } },
+     { AV_CODEC_ID_ATRAC3P,  { 0xBF, 0xAA, 0x23, 0xE9, 0x58, 0xCB, 0x71, 0x44, 0xA1, 0x19, 0xFF, 0xFA, 0x01, 0xE4, 0xCE, 0x62 } },
++    { AV_CODEC_ID_ATRAC3P_ATS, { 0x0D, 0x5C, 0x13, 0x50, 0x1B, 0xA2, 0xEC, 0x4B, 0x91, 0xED, 0x6E, 0xDD, 0xB8, 0x3C, 0x8C, 0x66 } },
+     { AV_CODEC_ID_ATRAC9,   { 0xD2, 0x42, 0xE1, 0x47, 0xBA, 0x36, 0x8D, 0x4D, 0x88, 0xFC, 0x61, 0x65, 0x4F, 0x8C, 0x83, 0x6C } },
+     { AV_CODEC_ID_EAC3,     { 0xAF, 0x87, 0xFB, 0xA7, 0x02, 0x2D, 0xFB, 0x42, 0xA4, 0xD4, 0x05, 0xCD, 0x93, 0x84, 0x3B, 0xDD } },
+     { AV_CODEC_ID_MP2,      { 0x2B, 0x80, 0x6D, 0xE0, 0x46, 0xDB, 0xCF, 0x11, 0xB4, 0xD1, 0x00, 0x80, 0x5F, 0x6C, 0xBB, 0xEA } },
+diff --git a/libavformat/riffdec.c b/libavformat/riffdec.c
+index 30835d5f36..c01c644ff0 100644
+--- a/libavformat/riffdec.c
++++ b/libavformat/riffdec.c
+@@ -207,6 +207,9 @@ int ff_get_wav_header(AVFormatContext *s, AVIOContext *pb,
+     /* override bits_per_coded_sample for G.726 */
+     if (par->codec_id == AV_CODEC_ID_ADPCM_G726 && par->sample_rate)
+         par->bits_per_coded_sample = par->bit_rate / par->sample_rate;
++    /* add the size of the ATS header for ATRAC3+ ATS */
++    if (par->codec_id == AV_CODEC_ID_ATRAC3P_ATS)
++        par->block_align += 8;
+ 
+     /* ignore WAVEFORMATEXTENSIBLE layout if different from channel count */
+     if (channels != par->ch_layout.nb_channels) {
