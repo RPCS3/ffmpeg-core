@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         build: [linux, windows, macos]
-        arch: [x64, arm, arm64]
+        arch: [x64, arm, arm64, ppc64]
         exclude:
           - build: windows
             arch: arm
@@ -22,6 +22,10 @@ jobs:
             arch: arm
           - build: windows
             arch: arm64
+          - build: macos
+            arch: ppc64
+          - build: windows
+            arch: ppc64
         include:
           - build: linux
             os: ubuntu-latest
